@@ -7,6 +7,7 @@ const galleryInput = document.getElementById("gallery-input");
 const preview = document.getElementById("preview");
 
 // button clicks
+
 cameraBtn.addEventListener("click", () => {
   cameraInput.click(); // opens camera
 });
@@ -15,7 +16,7 @@ galleryBtn.addEventListener("click", () => {
   galleryInput.click(); // opens gallery / files
 });
 
-//file handling
+// getting image file
 cameraInput.addEventListener("change", handleFile);
 galleryInput.addEventListener("change", handleFile);
 
@@ -23,7 +24,7 @@ function handleFile(event) {
   const file = event.target.files[0];
   if (!file) return;
 
-  //making sure file is an image
+  // make sure file selected is an image
   if (!file.type.startsWith("image/")) {
     alert("Please select an image.");
     return;
@@ -31,6 +32,7 @@ function handleFile(event) {
 
   console.log("Selected image:", file);
 
+  // Show preview
   preview.innerHTML = "";
 
   const img = document.createElement("img");
@@ -40,4 +42,7 @@ function handleFile(event) {
   img.onload = () => URL.revokeObjectURL(img.src);
 
   preview.appendChild(img);
+
 }
+
+
