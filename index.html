@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Culture I/O</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <header class="top-bar">
+    Culture I/O
+  </header>
+
+  <main class="container">
+    <div class="welcome-box">
+      <h1>Welcome!</h1>
+      <p>Please take a picture that completes the task in the prompt below.</p>
+    </div>
+
+    <div class="prompt">
+      <strong>PROMPT:</strong>
+      <p id="prompt-text">Your prompt text goes here.</p>
+    </div>
+
+    <div class="upload-box">
+      <label for="photo-input" class="upload-label">
+        Upload or Take a Photo
+      </label>
+      <input
+        type="file"
+        id="photo-input"
+        accept="image/*"
+        capture="environment"
+      />
+    </div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
