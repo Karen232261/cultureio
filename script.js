@@ -32,7 +32,7 @@ function handleFile(event) {
 
   console.log("Selected image:", file);
 
-  // Show preview
+  // show preview
   preview.innerHTML = "";
 
   const img = document.createElement("img");
@@ -43,6 +43,30 @@ function handleFile(event) {
 
   preview.appendChild(img);
 
+  document.addEventListener("DOMContentLoaded", () => {
+    fetchPrompt();
+  });
+
+  function fetchPrompt() {
+    fetch("/api/prompt")
+      .then(response => {
+        if (!response.ok) {
+          throw new Error("Failed to fetch prompt");
+        }
+        return response.json();
+      })
+      .then(data => {
+        const promptElement = document.getElementById("prompt-text");
+        promptElement.textContent = data.prompt;
+      })
+      .catch(error => {
+        console.error(error);
+        document.getElementById("prompt-text").textContent =
+          "Unable to load prompt. Please try again.";
+      });
+  }
+
 }
+
 
 
