@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Culture I/O</title>
+
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -20,32 +21,35 @@
 
     <div class="prompt">
       <strong>PROMPT:</strong>
-      <p id="prompt-text">Your prompt text goes here.</p>
+      <p id="prompt-text">Your prompt goes here.</p>
     </div>
 
-  <div class="upload-box">
-    <button id="camera-btn">Take Photo</button>
-    <button id="gallery-btn">Choose from Gallery</button>
-  
-    <input
-      type="file"
-      accept="image/*"
-      capture="environment"
-      id="camera-input"
-      hidden
-    />
-  
-    <input
-      type="file"
-      accept="image/*"
-      id="gallery-input"
-      hidden
-    />
-  </div>
+    <div class="upload-box">
+      <button id="camera-btn">Take Photo</button>
+      <button id="gallery-btn">Choose from Gallery</button>
 
+      <input
+        type="file"
+        id="camera-input"
+        accept="image/*"
+        capture="environment"
+        hidden
+      />
+
+      <input
+        type="file"
+        id="gallery-input"
+        accept="image/*"
+        hidden
+      />
+
+      <div id="preview"></div>
+    </div>
   </main>
 
   <script src="script.js"></script>
 </body>
 </html>
+
+
 
