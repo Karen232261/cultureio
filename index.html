@@ -23,19 +23,29 @@
       <p id="prompt-text">Your prompt text goes here.</p>
     </div>
 
-    <div class="upload-box">
-      <label for="photo-input" class="upload-label">
-        Upload or Take a Photo
-      </label>
-      <input
-        type="file"
-        id="photo-input"
-        accept="image/*"
-        capture="environment"
-      />
-    </div>
+  <div class="upload-box">
+    <button id="camera-btn">Take Photo</button>
+    <button id="gallery-btn">Choose from Gallery</button>
+  
+    <input
+      type="file"
+      accept="image/*"
+      capture="environment"
+      id="camera-input"
+      hidden
+    />
+  
+    <input
+      type="file"
+      accept="image/*"
+      id="gallery-input"
+      hidden
+    />
+  </div>
+
   </main>
 
   <script src="script.js"></script>
 </body>
 </html>
+
