@@ -1,45 +1,40 @@
+import os
+import uuid
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import boto3
 from werkzeug.utils import secure_filename
-from datetime import datetime
-from boxsdk import JWTAuth, Client
-import os
-import random
 
-# app setup
+
+# Flask setup
 app = Flask(__name__)
-CORS(app)  # allow frontend on a different domain
+CORS(app)  # allow frontend JS to call backend
 
-auth = JWTAuth.from_settings_file("box_config.json")
-client = Client(auth)
+UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-BOX_FOLDER_ID = "361352241411"
 
-# upload configuration
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Cloudflare R2 setup
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "heic"}
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 
+r2 = boto3.client(
+    "s3",
+    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+    aws_access_key_id=R2_ACCESS_KEY,
+    aws_secret_access_key=R2_SECRET_KEY,
+    region_name="auto",
+)
+
+
+# helper
 def allowed_file(filename):
-    return "." in filename and \
-           filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-# example prompts (replace later with ML)
-PROMPTS = [
-    "Take a photo that represents home to you.",
-    "Capture something that shows movement.",
-    "Photograph an object that holds personal meaning.",
-    "Take a picture of something easily overlooked.",
-    "Capture a moment of contrast."
-]
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in UPLOAD_EXTENSIONS
 
 # routes
-
-@app.route("/api/prompt", methods=["GET"])
-def get_prompt():
-    prompt = random.choice(PROMPTS)
-    return jsonify({"prompt": prompt}), 200
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -52,23 +47,43 @@ def upload():
         return jsonify({"error": "Empty filename"}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file type"}), 400
+        return jsonify({"error": "Unsupported file type"}), 400
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = secure_filename(file.filename)
-    save_name = f"{timestamp}_{filename}"
+    # make filename
+    ext = os.path.splitext(file.filename)[1].lower()
+    filename = f"{uuid.uuid4()}{ext}"
 
-    uploaded_file = client.folder(BOX_FOLDER_ID).upload_stream(
-        file.stream,
-        save_name
-    )
+    try:
+        r2.upload_fileobj(
+            file,
+            R2_BUCKET_NAME,
+            filename,
+            ExtraArgs={
+                "ContentType": file.content_type
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # placeholder: ML would run here later
 
     return jsonify({
         "status": "success",
-        "box_file_id": uploaded_file.id
-    }), 200
-    
+        "filename": filename
+    })
+
+
+@app.route("/api/prompt")
+def get_prompt():
+    # Placeholder prompt logic (replace with ML later)
+    return jsonify({
+        "prompt": "Take a photo of something that represents connection."
+    })
+
+
+
 # run locally
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)
+
 
