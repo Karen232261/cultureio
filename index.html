@@ -21,7 +21,24 @@
 
     <div class="prompt">
       <strong>PROMPT:</strong>
-      <p id="prompt-text">Loading prompt...</p>
+      <p id="prompt-text">Your prompt goes here.</p>
+    </div>
+
+    <!-- NEW: metadata display + contact -->
+    <div class="metadata-box">
+      <p><strong>Scan Info (temporary):</strong></p>
+      <p id="timestamp">Timestamp: loading...</p>
+      <p id="location">Location: requesting permission...</p>
+
+      <label for="contact">
+        Please enter Duke email or other contact info so we can reach out (optional):
+      </label>
+      <input
+        type="email"
+        id="contact"
+        placeholder="netid@duke.edu or other contact"
+        style="width: 100%; margin-top: 8px;"
+      />
     </div>
 
     <div class="upload-box">
@@ -45,15 +62,12 @@
 
       <div id="preview"></div>
 
-      <!-- NEW -->
-      <button id="submit-btn" disabled>Submit Photo</button>
-      <p id="status"></p>
+      <!-- NEW submit button -->
+      <button id="submit-btn" disabled>Submit</button>
     </div>
   </main>
 
   <script src="script.js"></script>
 </body>
 </html>
-
-
 
