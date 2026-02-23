@@ -72,7 +72,7 @@ submitBtn.addEventListener("click", async () => {
   formData.append("contact", document.getElementById("contact").value);
 
   try {
-    const res = await fetch("http://localhost:3000/upload", {
+    const res = await fetch("https://cultureio-production.up.railway.app/upload", {
       method: "POST",
       body: formData
     });

@@ -8,16 +8,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// This tells Express to serve files from your frontend folder
-app.use(express.static(path.join(__dirname, "../frontend")))
-
-const app = express();
-
-// CHANGE 1: Use Railway's dynamic port or default to 3000
-const port = process.env.PORT || 3000;
+const app = express(); 
 
 app.use(cors());
 app.use(express.json());
+
+app.use(express.static(path.join(__dirname, "../frontend")));
+
+const port = process.env.PORT || 3000;
 
 // Multer setup (store file in memory)
 const upload = multer({ storage: multer.memoryStorage() });
@@ -59,9 +57,6 @@ app.get("/api/prompt", (req, res) => {
   });
 });
 
-app.get("/", (req, res) => {
-  res.send("CultureIO Backend is Running!");
-});
 
 // CHANGE 3: Bind to 0.0.0.0 to ensure Railway can route traffic to it
 app.listen(port, "0.0.0.0", () => {
