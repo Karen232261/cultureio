@@ -3,9 +3,9 @@ import cors from "cors";
 import multer from "multer";
 import { uploadToS3 } from "./s3.js";
 import crypto from "crypto";
+
 import path from "path";
 import { fileURLToPath } from "node:url";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express(); 
@@ -56,7 +56,6 @@ app.get("/api/prompt", (req, res) => {
     prompt: "Take a photo of something that represents connection.",
   });
 });
-
 
 // CHANGE 3: Bind to 0.0.0.0 to ensure Railway can route traffic to it
 app.listen(port, "0.0.0.0", () => {

@@ -28,3 +28,4 @@ export async function uploadToS3(fileBuffer, fileName, mimeType) {
     key: fileName,
   };
 }
+
