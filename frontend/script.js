@@ -92,7 +92,7 @@ submitBtn.addEventListener("click", async () => {
   formData.append("caption", document.getElementById("caption").value);
 
   try {
-    const res = await fetch("http://localhost:3000/upload", {
+    const res = await fetch("/upload", {
       method: "POST",
       body: formData
     });
