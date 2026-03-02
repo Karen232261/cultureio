@@ -1,21 +1,28 @@
 const cameraBtn = document.getElementById("camera-btn");
 const galleryBtn = document.getElementById("gallery-btn");
 const submitBtn = document.getElementById("submit-btn");
+const restartBtn = document.getElementById("restart-btn");
 
 const cameraInput = document.getElementById("camera-input");
 const galleryInput = document.getElementById("gallery-input");
 
+const mainContent = document.getElementById("main-content");
+const thankYouContent = document.getElementById("thank-you-content");
 const preview = document.getElementById("preview");
+
+// The container for Contact and Caption that starts hidden
+const postUploadFields = document.getElementById("post-upload-fields");
 
 let selectedFile = null;
 let userLocation = null;
 let scanTimestamp = new Date().toISOString();
 
-/* Timestamp */
+
+// Set the visual timestamp for the UI
 document.getElementById("timestamp").textContent =
   "Timestamp: " + new Date().toLocaleString();
 
-/* Location */
+// Request Geolocation on load
 if ("geolocation" in navigator) {
   navigator.geolocation.getCurrentPosition(
     (position) => {
@@ -38,12 +45,13 @@ if ("geolocation" in navigator) {
     "Location: not supported";
 }
 
-/* File selection */
+
 cameraBtn.addEventListener("click", () => cameraInput.click());
 galleryBtn.addEventListener("click", () => galleryInput.click());
 
 cameraInput.addEventListener("change", handleFile);
 galleryInput.addEventListener("change", handleFile);
+
 
 function handleFile(event) {
   const file = event.target.files[0];
@@ -52,6 +60,10 @@ function handleFile(event) {
   selectedFile = file;
   submitBtn.disabled = false;
 
+  // Show the hidden fields
+  postUploadFields.style.display = "flex";
+
+  // Clear previous and show new preview
   preview.innerHTML = "";
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
@@ -59,17 +71,25 @@ function handleFile(event) {
   img.style.marginTop = "15px";
   img.onload = () => URL.revokeObjectURL(img.src);
   preview.appendChild(img);
+  
+  // Smooth scroll to the new fields so the user sees them
+  postUploadFields.scrollIntoView({ behavior: 'smooth' });
 }
 
-/* Submit upload */
+
 submitBtn.addEventListener("click", async () => {
   if (!selectedFile) return;
+
+  // Update UI to show progress
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Uploading...";
 
   const formData = new FormData();
   formData.append("photo", selectedFile);
   formData.append("timestamp", scanTimestamp);
   formData.append("location", JSON.stringify(userLocation));
   formData.append("contact", document.getElementById("contact").value);
+  formData.append("caption", document.getElementById("caption").value);
 
   try {
     const res = await fetch("https://cultureio-production.up.railway.app/upload", {
@@ -79,19 +99,23 @@ submitBtn.addEventListener("click", async () => {
 
     if (!res.ok) throw new Error("Upload failed");
 
-    const data = await res.json();
-    alert("Upload successful!");
-    submitBtn.disabled = true;
-
-
-    // fetch("/api/prompt")
-    //   .then(r => r.json())
-    //   .then(p => {
-    //     document.getElementById("prompt-text").textContent = p.prompt;
-    //   });
+    // Hide the form and show the Thank You page
+    mainContent.style.display = "none";
+    thankYouContent.style.display = "flex";
+    
+    // Ensure the user starts at the top of the new content
+    window.scrollTo(0, 0);
 
   } catch (err) {
     console.error(err);
-    alert("Upload failed.");
+    alert("Upload failed. Please try again.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit";
   }
+});
+
+
+// Refresh the page to reset all fields and states for a new submission
+restartBtn.addEventListener("click", () => {
+  location.reload();
 });

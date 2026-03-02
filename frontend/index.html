@@ -1,57 +1,77 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Culture I/O</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
   <header class="top-bar">
     Culture I/O
   </header>
 
-  <main class="container">
+  <main class="container" id="main-content">
     <div class="welcome-box">
       <h1>Welcome!</h1>
       <p>Please take a picture that completes the task below.</p>
     </div>
-
-    <div class="prompt">
-      <strong>PROMPT:</strong>
-      <p id="prompt-text">Submit a photo to receive the next prompt.</p>
+    <div class="task-card">
+        "Share a photo you’ve taken that holds personal significance to you."
     </div>
-
+    
     <div class="metadata-box">
-      <p><strong>Scan Info (temporary):</strong></p>
-      <p id="timestamp">Timestamp: loading...</p>
-      <p id="location">Location: requesting permission...</p>
-
-      <label for="contact">
-        Please enter Duke email or other contact info so we can reach out (optional):
-      </label>
-      <input
-        type="email"
-        id="contact"
-        placeholder="netid@duke.edu or other contact"
-        style="width: 100%; margin-top: 8px;"
-      />
+      <div id="timestamp" style="font-size: 0.8rem; opacity: 0.8;">Timestamp: Loading...</div>
+      <div id="location" style="font-size: 0.8rem; opacity: 0.8;">Location: Requesting...</div>
     </div>
+    
 
     <div class="upload-box">
       <button id="camera-btn">Take Photo</button>
       <button id="gallery-btn">Choose from Gallery</button>
-
+      
       <input type="file" id="camera-input" accept="image/*" capture="environment" hidden />
       <input type="file" id="gallery-input" accept="image/*" hidden />
-
+      
       <div id="preview"></div>
+
+      <div id="post-upload-fields" style="display: none; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+        <div class="field-group">
+          <label for="caption">Add a caption (Optional but greatly appreciated)</label>
+          <textarea id="caption" placeholder="Tell us more about this photo..." 
+                    style="width: 100%; padding: 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--input-background); font-family: inherit; resize: vertical;" 
+                    rows="3"></textarea>
+        </div>
+
+        <div class="field-group">
+          <label for="contact">Contact Information</label>
+          <input type="text" id="contact" placeholder="Email or Phone Number" style="width: 100%;">
+        </div>
+      </div>
+
       <button id="submit-btn" disabled>Submit</button>
     </div>
+  </main>
+
+  <main class="container" id="thank-you-content" style="display: none;">
+    <div class="welcome-box">
+      <h1>Thank You!</h1>
+      <p>Your contribution has been received.</p>
+    </div>
+
+    <div class="prompt">
+      <strong>NEXT STEPS</strong>
+      <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
+        <li>Step 1: Hand the photo to someone else.</li>
+        <li>Step 2: Share information on the project to the other person.</li>
+      </ul>
+    </div>
+
+    <button id="restart-btn" style="background-color: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border);">
+      Submit Another Photo
+    </button>
   </main>
 
   <script src="script.js"></script>
 </body>
 </html>
-
