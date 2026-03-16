@@ -1,31 +1,27 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import dotenv from "dotenv";
+
 dotenv.config();
 
-const REGION = "us-east-1";
-const BUCKET_NAME = "memoryproject";
-
-const s3 = new S3Client({
-  region: "us-east-1",
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  }
+  },
 });
 
-export async function uploadToS3(fileBuffer, fileName, mimeType) {
-  const command = new PutObjectCommand({
-    Bucket: BUCKET_NAME,
-    Key: fileName,
-    Body: fileBuffer,
-    ContentType: mimeType,
+export async function uploadToS3(fileBuffer, fileName, contentType) {
+  const parallelUploads3 = new Upload({
+    client: s3Client,
+    params: {
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: fileName,
+      Body: fileBuffer,
+      ContentType: contentType,
+    },
   });
 
-  await s3.send(command);
-
-  return {
-    bucket: BUCKET_NAME,
-    key: fileName,
-  };
+  return await parallelUploads3.done();
 }
-
