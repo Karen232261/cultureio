@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const culture_schema = new mongoose.Schema({
+    nfcTagId: String,
     imageId: { 
         type: String, 
         unique: true, 
