@@ -24,7 +24,9 @@ const culture_schema = new mongoose.Schema({
         longitude: Number,
     },
     contact: String,
+    approved: { type: Boolean, default: false }, // New submissions start as "Pending"
     timestamp: { type: Date, default: Date.now }
 });
 
 export const CultureModel = mongoose.model('Culture', culture_schema, 'Images');
+
