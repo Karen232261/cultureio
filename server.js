@@ -50,11 +50,11 @@ app.post("/api/get-upload-url", async (req, res) => {
 // STEP 2: Save and return the specific image data
 app.post("/api/save-entry", async (req, res) => {
   try {
-    const { s3Url, caption, contact, location, timestamp } = req.body;
+    const { nfcTagId, s3Url, caption, contact, location, timestamp } = req.body;
     const newEntry = new CultureModel({
+      nfcTagId: nfcTagId,
       s3Url, caption, contact, location,
       timestamp: timestamp || new Date().toISOString(),
-      nfcTagId: nfcTagId,
       approved: false 
     });
     await newEntry.save();
