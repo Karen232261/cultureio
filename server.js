@@ -1,103 +1,115 @@
 import express from "express";
 import cors from "cors";
-import multer from "multer";
-import { uploadToS3 } from "./s3.js";
 import crypto from "crypto";
-
 import mongoose from "mongoose";
-import { CultureModel } from "./culture_schema.js";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "node:url";
+
+// Import BOTH functions from s3.js
+import { generatePresignedUrl, generateGetPresignedUrl } from "./s3.js";
+import { CultureModel } from "./culture_schema.js";
 
 dotenv.config();
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
 
-// Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("Connected to MongoDB Atlas"))
   .catch(err => console.error("MongoDB connection error:", err));
 
-import path from "path";
-import { fileURLToPath } from "node:url";
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const app = express(); 
-
 app.use(cors());
 app.use(express.json());
-
 app.use(express.static(path.join(__dirname, "/frontend")));
 
 const port = process.env.PORT || 3000;
 
-// Multer setup (store file in memory)
-const upload = multer({ storage: multer.memoryStorage() });
-
-
-app.post("/upload", upload.single("photo"), async (req, res) => {
+// STEP 1: Request Upload URL
+app.post("/api/get-upload-url", async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    // Get text fields from the frontend
-    const { timestamp, contact, caption } = req.body;
-
-    // parse the location string back into a usable Object
-    let parsedLocation = null;
-    if (req.body.location) {
-      try {
-        parsedLocation = JSON.parse(req.body.location);
-      } catch (e) {
-        console.error("Location parsing failed:", e);
-      }
+    const { contentType, extension } = req.body;
+    if (!contentType || !extension) {
+      return res.status(400).json({ error: "contentType and extension are required" });
     }
 
-    // Upload the image to S3
-    const ext = req.file.originalname.split(".").pop();
-    const filename = `${crypto.randomUUID()}.${ext}`;
-    
-    const s3Result = await uploadToS3(req.file.buffer, filename, req.file.mimetype);
+    const timestamp = Date.now();
+    const filename = `${timestamp}-${crypto.randomUUID()}.${extension}`;
+    const signedUrl = await generatePresignedUrl(filename, contentType);
 
-    // Save everything to MongoDB 
-    const newEntry = new CultureModel({
-      s3Url: s3Result.Location || s3Result, 
-      caption: caption,
-      contact: contact,
-      location: parsedLocation, 
-      timestamp: timestamp
-    });
-
-    await newEntry.save();
-
-    console.log("Database entry saved for:", filename);
+    // Note: We still store the basic path in Mongo, but we'll sign it on the way out
+    const publicUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${filename}`;
 
     res.json({
-      success: true,
-      dbEntry: newEntry
+      uploadUrl: signedUrl,
+      publicUrl: publicUrl
     });
-
   } catch (err) {
-    console.error("Upload error:", err);
-    // If the caption fails validation, it will send the error message here
-    res.status(500).json({ error: err.message || "Upload failed" });
+    console.error("Error generating signed URL:", err);
+    res.status(500).json({ error: "Could not create upload URL" });
   }
 });
 
-app.get("/api/findall", async (req, res) => {
-    try {
-        const data = await CultureModel.find();
-        res.send(data);
-    } catch (err) {
-        res.status(500).send(err);
+// STEP 2: Save to MongoDB
+app.post("/api/save-entry", async (req, res) => {
+  try {
+    const { s3Url, caption, contact, location, timestamp } = req.body;
+
+    let parsedLocation = location;
+    if (typeof location === "string") {
+      try { parsedLocation = JSON.parse(location); } catch (e) { console.error(e); }
     }
+
+    const newEntry = new CultureModel({
+      s3Url,
+      caption,
+      contact,
+      location: parsedLocation,
+      timestamp: timestamp || new Date().toISOString()
+    });
+
+    await newEntry.save();
+    res.json({ success: true, dbEntry: newEntry });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// STEP 3: Find All (Now with dynamic viewing URLs)
+app.get("/api/findall", async (req, res) => {
+  try {
+    const data = await CultureModel.find().sort({ createdAt: -1 });
+
+    // Generate a temporary viewing URL for every image in the gallery
+    const resultsWithSignedUrls = await Promise.all(
+      data.map(async (doc) => {
+        // Extract the filename (everything after the last slash)
+        const filename = doc.s3Url.split("/").pop();
+        
+        try {
+          const temporaryUrl = await generateGetPresignedUrl(filename);
+          // Return the doc data but swap the s3Url for the signed one
+          return {
+            ...doc._doc,
+            s3Url: temporaryUrl
+          };
+        } catch (err) {
+          console.error(`Failed to sign ${filename}`, err);
+          return doc; // Fallback to original if it fails
+        }
+      })
+    );
+
+    res.send(resultsWithSignedUrls);
+  } catch (err) {
+    res.status(500).send(err);
+  }
 });
 
 app.get("/api/prompt", (req, res) => {
-  res.json({
-    prompt: "Take a photo of something that represents connection.",
-  });
+  res.json({ prompt: "Take a photo of something that represents connection." });
 });
 
-// Bind to 0.0.0.0 to ensure Railway can route traffic to it
 app.listen(port, "0.0.0.0", () => {
   console.log(`Server running on port ${port}`);
 });
-

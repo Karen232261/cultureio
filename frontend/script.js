@@ -84,20 +84,47 @@ submitBtn.addEventListener("click", async () => {
   submitBtn.disabled = true;
   submitBtn.textContent = "Uploading...";
 
-  const formData = new FormData();
-  formData.append("photo", selectedFile);
-  formData.append("timestamp", scanTimestamp);
-  formData.append("location", JSON.stringify(userLocation));
-  formData.append("contact", document.getElementById("contact").value);
-  formData.append("caption", document.getElementById("caption").value);
-
   try {
-    const res = await fetch("/upload", {
+    // Get the Presigned URL from Backend
+    const extension = selectedFile.name.split('.').pop();
+    const urlResponse = await fetch("/api/get-upload-url", {
       method: "POST",
-      body: formData
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: selectedFile.type,
+        extension: extension
+      })
     });
 
-    if (!res.ok) throw new Error("Upload failed");
+    if (!urlResponse.ok) throw new Error("Could not get upload URL");
+    const { uploadUrl, publicUrl } = await urlResponse.json();
+
+    // Upload directly to S3 using the Signed URL
+    const s3Response = await fetch(uploadUrl, {
+      method: "PUT",
+      body: selectedFile,
+      headers: { "Content-Type": selectedFile.type }
+    });
+
+    if (!s3Response.ok) throw new Error("S3 Upload Failed");
+
+    //  Save the final entry to MongoDB 
+    const contactValue = document.getElementById("contact").value;
+    const captionValue = document.getElementById("caption").value;
+
+    const saveResponse = await fetch("/api/save-entry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        s3Url: publicUrl,
+        timestamp: scanTimestamp,
+        location: userLocation, // Sending as object, server will handle it
+        contact: contactValue,
+        caption: captionValue
+      })
+    });
+
+    if (!saveResponse.ok) throw new Error("Database save failed");
 
     // Hide the form and show the Thank You page
     mainContent.style.display = "none";
