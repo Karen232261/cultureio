@@ -54,10 +54,17 @@ function handleFile(event) {
 }
 
 submitBtn.addEventListener("click", async () => {
+    const contactValue = document.getElementById("contact").value.trim();
+    
+    if (!contactValue) {
+      alert("Please provide contact information before submitting.");
+      return;
+    }
+
   if (!selectedFile) return;
   submitBtn.disabled = true;
   submitBtn.textContent = "Uploading...";
-
+  
   try {
     const extension = selectedFile.name.split('.').pop();
     const urlResponse = await fetch("/api/get-upload-url", {

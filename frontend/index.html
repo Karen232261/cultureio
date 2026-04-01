@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="top-bar">Culture I/O</header>
+  <header class="top-bar">Culture I/O: The Memory Project</header>
 
   <main class="container" id="main-content">
     <div class="welcome-box">
@@ -18,9 +18,9 @@
         "Share a photo you’ve taken that holds personal significance to you."
     </div>
     
-    <div class="metadata-box">
-      <div id="timestamp" style="font-size: 0.8rem; opacity: 0.8;">Timestamp: Loading...</div>
-      <div id="location" style="font-size: 0.8rem; opacity: 0.8;">Location: Requesting...</div>
+    <div class="metadata-box" style="display: none;">
+      <div id="timestamp">Timestamp: Loading...</div>
+      <div id="location">Location: Requesting...</div>
     </div>
 
     <div class="upload-box">
@@ -38,7 +38,7 @@
           <textarea id="caption" placeholder="Tell us more about this photo..." rows="3" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ccc;"></textarea>
         </div>
         <div class="field-group">
-          <label for="contact">Contact Information</label>
+          <label for="contact">Contact Information (Required)</label>
           <input type="text" id="contact" placeholder="Email or Phone Number" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ccc;">
         </div>
       </div>

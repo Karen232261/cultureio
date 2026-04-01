@@ -9,7 +9,7 @@ const culture_schema = new mongoose.Schema({
     },
     caption: {
         type: String,
-        required: true,
+        required: false,
         validate: {
             validator: function(v) {
                 // Add forbidden words here
@@ -24,7 +24,10 @@ const culture_schema = new mongoose.Schema({
         latitude: Number,
         longitude: Number,
     },
-    contact: String,
+    contact: {
+        type: String,
+        required: [true, "Contact information is required to submit!"] // Now required
+    },    
     approved: { type: Boolean, default: false }, // New submissions start as "Pending"
     timestamp: { type: Date, default: Date.now }
 });
