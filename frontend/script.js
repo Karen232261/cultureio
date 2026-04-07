@@ -11,8 +11,8 @@ const postUploadFields = document.getElementById("post-upload-fields");
 
 // Window.location.pathname will give you "/test1"
 // .substring(1) removes the slash, leaving just "test1"
-const nfcTagId = window.location.pathname.substring(1) || "direct-access";
-console.log("Current NFC Tag Source:", nfcTagId);
+const referralID = window.location.pathname.substring(1) || "direct-access";
+console.log("Current NFC Tag Source:", referralID);
 
 let selectedFile = null;
 let userLocation = null;
@@ -87,7 +87,7 @@ submitBtn.addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        nfcTagId: nfcTagId,
+        referralID: referralID,
         s3Url: publicUrl,
         timestamp: scanTimestamp,
         location: userLocation,

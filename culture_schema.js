@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const culture_schema = new mongoose.Schema({
-    nfcTagId: String,
+    referralID: String,
     imageId: { 
         type: String, 
         unique: true, 
@@ -19,7 +19,6 @@ const culture_schema = new mongoose.Schema({
             message: "Caption contains inappropriate language!"
         }
     },
-    s3Url: String,
     location: {
         latitude: Number,
         longitude: Number,
