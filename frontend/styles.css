@@ -176,7 +176,7 @@ button:active {
   color: #ffffff;
 }
 
-#camera-btn, #restart-btn {
+#restart-btn {
   background-color: var(--secondary);
   color: #000000;
   border: 1px solid var(--border);
