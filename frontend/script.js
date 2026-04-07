@@ -1,8 +1,6 @@
-const cameraBtn = document.getElementById("camera-btn");
 const galleryBtn = document.getElementById("gallery-btn");
 const submitBtn = document.getElementById("submit-btn");
 const restartBtn = document.getElementById("restart-btn");
-const cameraInput = document.getElementById("camera-input");
 const galleryInput = document.getElementById("gallery-input");
 const mainContent = document.getElementById("main-content");
 const thankYouContent = document.getElementById("thank-you-content");
@@ -31,10 +29,8 @@ if ("geolocation" in navigator) {
   );
 }
 
-cameraBtn.addEventListener("click", () => cameraInput.click());
 galleryBtn.addEventListener("click", () => galleryInput.click());
 
-cameraInput.addEventListener("change", handleFile);
 galleryInput.addEventListener("change", handleFile);
 
 function handleFile(event) {
