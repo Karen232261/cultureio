@@ -17,20 +17,46 @@
     <div id="admin-list" class="admin-grid"></div>
 
     <script>
-        async function loadPending() {
+        async function action(id, type) {
+            const method = type === 'approve' ? 'PUT' : 'DELETE';
+            const url = `/api/admin/${type}/${id}`;
+            
             try {
-                // The / at the start is important to make it relative to your domain
-                const res = await fetch('/api/admin/pending'); 
+                const res = await fetch(url, { method });
+                if (res.ok) {
+                    console.log(`${type} successful for ID: ${id}`);
+                    loadPending(); // Refresh the list
+                } else {
+                    const errorData = await res.json();
+                    alert("Action failed: " + (errorData.error || res.statusText));
+                }
+            } catch (err) {
+                console.error("Network error during action:", err);
+            }
+        }
+
+        async function loadPending() {
+            const list = document.getElementById('admin-list');
+            try {
+                const res = await fetch('/api/admin/pending');
                 
-                if (res.status === 401) {
-                    alert("Session expired or unauthorized. Please refresh and log in again.");
+                // Handle 500 or 401 errors from the server
+                if (!res.ok) {
+                    const errBody = await res.json();
+                    list.innerHTML = `<h3 style="color:red;">Server Error ${res.status}</h3><p>${errBody.error || 'Check server logs'}</p>`;
                     return;
                 }
 
                 const data = await res.json();
-                const list = document.getElementById('admin-list');
                 
-                if (!data || data.length === 0) {
+                // Safety: Ensure data is actually an array
+                if (!Array.isArray(data)) {
+                    console.error("Expected array but got:", data);
+                    list.innerHTML = "<h3>Error: Server returned invalid data format.</h3>";
+                    return;
+                }
+
+                if (data.length === 0) {
                     list.innerHTML = "<h3>No pending photos! Go grab a coffee. ☕</h3>";
                     return;
                 }
@@ -38,7 +64,7 @@
                 list.innerHTML = data.map(photo => `
                     <div class="admin-card">
                         <img src="${photo.s3Url}">
-                        <p><strong>Caption:</strong> ${photo.caption || 'None'}</p>
+                        <p><strong>ID:</strong> ${photo.imageId || 'N/A'}</p>
                         <p><strong>Contact:</strong> ${photo.contact || 'None'}</p>
                         <div class="controls">
                             <button class="approve-btn" onclick="action('${photo._id}', 'approve')">Approve</button>
@@ -48,17 +74,11 @@
                 `).join('');
             } catch (err) {
                 console.error("Error loading pending photos:", err);
+                list.innerHTML = "<h3>Frontend Error: Could not connect to server.</h3>";
             }
         }
 
-        async function action(id, type) {
-            const method = type === 'approve' ? 'PUT' : 'DELETE';
-            const url = `/api/admin/${type}/${id}`;
-            
-            const res = await fetch(url, { method });
-            if (res.ok) loadPending();
-        }
-
+        // Initialize the page
         loadPending();
     </script>
 </body>

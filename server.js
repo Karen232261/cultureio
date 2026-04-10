@@ -34,34 +34,50 @@ const port = process.env.PORT || 3000;
 // STEP 1: Request an upload "Ticket"
 app.post("/api/get-upload-url", async (req, res) => {
   try {
-    const { contentType, extension } = req.body;
-    if (!contentType || !extension) return res.status(400).json({ error: "Missing data" });
+    // Receive the custom fileName from the frontend
+    const { contentType, fileName } = req.body;
+    if (!fileName) {
+      return res.status(400).json({ error: "fileName is required" });
+    }
+    const uploadUrl = await generatePresignedUrl(fileName, contentType);
+    // Construct the public URL using the bucket name and the new filename
+    const publicUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
 
-    const filename = `${Date.now()}-${crypto.randomUUID()}.${extension}`;
-    const signedUrl = await generatePresignedUrl(filename, contentType);
-    const publicUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${filename}`;
-
-    res.json({ uploadUrl: signedUrl, publicUrl: publicUrl });
+    res.json({ uploadUrl, publicUrl });
   } catch (err) {
-    res.status(500).json({ error: "S3 Signer Error" });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // STEP 2: Save and return the specific image data
 app.post("/api/save-entry", async (req, res) => {
   try {
-    const { referralID, s3Url, caption, contact, location, timestamp } = req.body;
+    // 1. You MUST extract these from req.body
+    const { 
+      referralID,  
+      s3Url, 
+      timestamp, 
+      location, 
+      contact, 
+      caption,
+      imageId
+    } = req.body;
+
+    // 2. Pass them into the model
     const newEntry = new CultureModel({
-      referralID,
-      s3Url, caption, contact, location,
-      timestamp: timestamp || new Date().toISOString(),
-      approved: false 
+      referralID, // Ensure this matches your schema (referralID vs nfcTagId)
+      s3Url,
+      timestamp,
+      location,
+      contact,
+      caption,
+      imageId
     });
+
     await newEntry.save();
-    
-    // We send back the URL so the frontend can display it as confirmation
-    res.json({ success: true, s3Url: s3Url });
+    res.json({ success: true });
   } catch (err) {
+    console.error("Database Save Error:", err); // This prints the REAL error to your terminal
     res.status(500).json({ error: err.message });
   }
 });
@@ -74,14 +90,35 @@ app.get("/admin.html", adminProtector, (req, res) => {
 app.get("/api/admin/pending", adminProtector, async (req, res) => {
   try {
     const data = await CultureModel.find({ approved: false }).sort({ createdAt: -1 });
+    
     const results = await Promise.all(data.map(async (doc) => {
-        const filename = doc.s3Url.split("/").pop();
-        const temporaryUrl = await generateGetPresignedUrl(filename);
-        return { ...doc._doc, s3Url: temporaryUrl };
+        let filename = null;
+        if (doc.s3Url) {
+            filename = doc.s3Url.split("/").pop();
+        } 
+                
+        if (!filename && doc.imageId) {
+            filename = `${doc.imageId}.jpeg`; 
+        }
+
+        if (filename) {
+            try {
+                const temporaryUrl = await generateGetPresignedUrl(filename);
+                return { ...doc._doc, s3Url: temporaryUrl };
+            } catch (err) {
+                console.error(`S3 Sign failed for ${filename}:`, err.message);
+                return { ...doc._doc, s3Url: 'https://via.placeholder.com/150?text=S3+Link+Error' };
+            }
+        }
+
+        // 3. Final safety net
+        return { ...doc._doc, s3Url: 'https://via.placeholder.com/150?text=No+Image+Reference' };
     }));
-    res.send(results);
+
+    res.json(results);
   } catch (err) {
-    res.status(500).send(err);
+    console.error("Admin route crash:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

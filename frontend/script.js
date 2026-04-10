@@ -63,10 +63,16 @@ submitBtn.addEventListener("click", async () => {
   
   try {
     const extension = selectedFile.name.split('.').pop();
+    const uniqueImageId = `img_${Date.now()}`; 
+    const fileName = `${uniqueImageId}.${extension}`;
+
     const urlResponse = await fetch("/api/get-upload-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contentType: selectedFile.type, extension: extension })
+      body: JSON.stringify({ 
+        contentType: selectedFile.type, 
+        fileName: fileName // Send the specific filename to the server
+      })
     });
 
     const { uploadUrl, publicUrl } = await urlResponse.json();
@@ -84,14 +90,15 @@ submitBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         referralID: referralID,
-        s3Url: publicUrl,
+        imageId: uniqueImageId,
+        s3Url: publicUrl,        // Keep this for now for "Hybrid" support
         timestamp: scanTimestamp,
         location: userLocation,
         contact: document.getElementById("contact").value,
         caption: document.getElementById("caption").value
       })
     });
-
+ 
     const result = await saveResponse.json();
     if (!result.success) throw new Error("Database save failed");
     // NEW LOGIC: Use the local object URL we already created for the first preview

@@ -2,11 +2,6 @@ import mongoose from 'mongoose';
 
 const culture_schema = new mongoose.Schema({
     referralID: String,
-    imageId: { 
-        type: String, 
-        unique: true, 
-        default: () => `img_${Date.now()}` 
-    },
     caption: {
         type: String,
         required: false,
@@ -19,6 +14,7 @@ const culture_schema = new mongoose.Schema({
             message: "Caption contains inappropriate language!"
         }
     },
+    s3Url: String,
     location: {
         latitude: Number,
         longitude: Number,
@@ -28,7 +24,11 @@ const culture_schema = new mongoose.Schema({
         required: [true, "Contact information is required to submit!"] // Now required
     },    
     approved: { type: Boolean, default: false }, // New submissions start as "Pending"
-    timestamp: { type: Date, default: Date.now }
+    timestamp: { type: Date, default: Date.now },
+    imageId: { 
+        type: String, 
+        unique: true, 
+    },
 });
 
 export const CultureModel = mongoose.model('Culture', culture_schema, 'Images');
