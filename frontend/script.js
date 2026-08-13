@@ -5,14 +5,10 @@ const galleryInput = document.getElementById("gallery-input");
 const mainContent = document.getElementById("main-content");
 const thankYouContent = document.getElementById("thank-you-content");
 const preview = document.getElementById("preview");
-<<<<<<< HEAD
-const postUploadFields = document.getElementById("post-upload-fields");
-=======
 const postUploadFields = document.getElementById("post-upload-fields");
 // Added for an uploading progress bar after hitting submit
 const submitFill = document.getElementById("submit-fill");
 const submitLabel = document.getElementById("submit-label");
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
 
 // Window.location.pathname will give you "/test1"
 // .substring(1) removes the slash, leaving just "test1"
@@ -66,18 +62,10 @@ submitBtn.addEventListener("click", async () => {
 
   if (!selectedFile) return;
   submitBtn.disabled = true;
-<<<<<<< HEAD
-  submitBtn.textContent = "Uploading...";
-  
-  try {
-    const extension = selectedFile.name.split('.').pop();
-    const uniqueImageId = `img_${Date.now()}`; 
-=======
 
   try {
     const extension = selectedFile.name.split('.').pop();
     const uniqueImageId = `img_${Date.now()}-${crypto.randomUUID()}`;
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
     const fileName = `${uniqueImageId}.${extension}`;
 
     const urlResponse = await fetch("/api/get-upload-url", {
@@ -91,17 +79,7 @@ submitBtn.addEventListener("click", async () => {
 
     const { uploadUrl, publicUrl } = await urlResponse.json();
 
-<<<<<<< HEAD
-    const s3Response = await fetch(uploadUrl, {
-      method: "PUT",
-      body: selectedFile,
-      headers: { "Content-Type": selectedFile.type }
-    });
-
-    if (!s3Response.ok) throw new Error("S3 Upload Failed");
-=======
     await uploadWithProgress(uploadUrl, selectedFile);
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
 
     const saveResponse = await fetch("/api/save-entry", {
       method: "POST",
@@ -135,12 +113,6 @@ submitBtn.addEventListener("click", async () => {
     console.error(err);
     alert("Upload failed. Please try again.");
     submitBtn.disabled = false;
-<<<<<<< HEAD
-    submitBtn.textContent = "Submit";
-  }
-});
-
-=======
     submitLabel.textContent = "Submit";
     submitFill.style.width = "0%";
   }
@@ -169,5 +141,4 @@ function uploadWithProgress(url, file) {
   });
 }
 
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
 restartBtn.addEventListener("click", () => { location.reload(); });

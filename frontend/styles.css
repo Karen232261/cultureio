@@ -160,8 +160,6 @@ button {
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.2s ease;
-<<<<<<< HEAD
-=======
   position: relative;
   overflow: hidden;
 }
@@ -177,7 +175,6 @@ button {
 
 #submit-label {
   position: relative;
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
 }
 
 button:active {
@@ -190,13 +187,8 @@ button:active {
 }
 
 #gallery-btn {
-<<<<<<< HEAD
-  background-color: #000000;
-  color: #ffffff;
-=======
   background-color: #b1b0b0;
   color: #000000;
->>>>>>> b6e19e8 (added upload progress bar after submission, removed the Next Steps section in index html)
 }
 
 #restart-btn {
