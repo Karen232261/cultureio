@@ -123,7 +123,7 @@ function uploadWithProgress(url, file) {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", file.type);
-
+    xhr.setRequestHeader("Cache-Control", "public, max-age=604800, immutable");
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         const pct = Math.round((e.loaded / e.total) * 100);

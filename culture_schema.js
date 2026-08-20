@@ -29,6 +29,18 @@ const culture_schema = new mongoose.Schema({
         type: String, 
         unique: true, 
     },
+    // Added to support the graphing pages: { scene: {...}, objects: [...] },
+    // filled in by the classifier microservice after upload.
+    classification: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null // null = not yet classified (used to find old entries needing backfill)
+    },
+
+    signature: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null  // null = not yet signed
+    }   
+
 });
 
 export const CultureModel = mongoose.model('Culture', culture_schema, 'Images');
