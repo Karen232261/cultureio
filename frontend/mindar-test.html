@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MindAR Test Harness</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+  }
+}
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0b0d10;
+    color: #e6e8eb;
+  }
+  #container {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    overflow: hidden;
+  }
+  #hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    pointer-events: none;
+  }
+  #controls {
+    pointer-events: auto;
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    background: #1a1d21;
+    color: #e6e8eb;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #24282d; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #status-panel {
+    pointer-events: auto;
+    background: rgba(15, 17, 20, 0.88);
+    border: 1px solid #2a2e33;
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 260px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  #status-panel h3 {
+    margin: 0 0 6px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8a9099;
+    font-weight: 600;
+  }
+  .target-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4a4f57;
+    flex-shrink: 0;
+  }
+  .dot.detected { background: #3ddc84; box-shadow: 0 0 6px #3ddc84; }
+  .target-row .id {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: #c7cbd1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .target-row.is-detected .id { color: #3ddc84; }
+
+  #perf {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: #8a9099;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #2a2e33;
+  }
+  #perf span { color: #e6e8eb; }
+
+  #log {
+    pointer-events: auto;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    max-height: 140px;
+    overflow-y: auto;
+    background: rgba(15, 17, 20, 0.88);
+    border-top: 1px solid #2a2e33;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    padding: 8px 12px;
+  }
+  #log div { padding: 1px 0; color: #8a9099; }
+  #log div.found { color: #3ddc84; }
+  #log div.lost { color: #e0575b; }
+
+  #graph-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(6, 7, 9, 0.96);
+    flex-direction: column;
+  }
+  #graph-overlay.visible { display: flex; }
+  #graph-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid #2a2e33;
+    font-size: 13px;
+    color: #8a9099;
+  }
+  #graph-overlay-header .title { color: #e6e8eb; font-weight: 600; }
+  #graph-overlay-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #graph-overlay-nav button {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  #graph-cy {
+    flex: 1;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+  #graph-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  #graph-canvas:active { cursor: grabbing; }
+  #graph-overlay-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #4a4f57;
+    font-size: 14px;
+  }
+  #graph-overlay-footer {
+    padding: 10px 20px;
+    font-size: 11px;
+    color: #4a4f57;
+    text-align: center;
+    border-top: 1px solid #2a2e33;
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+  <div id="status-panel">
+    <h3>Targets</h3>
+    <div id="target-list">Loading manifest...</div>
+    <div id="perf">FPS: <span id="fps">--</span> &nbsp;|&nbsp; Targets: <span id="target-count">--</span> &nbsp;|&nbsp; maxTrack: <span id="maxtrack-val">--</span></div>
+  </div>
+</div>
+
+<div id="container"></div>
+<div id="log"></div>
+
+<div id="graph-overlay">
+  <div id="graph-overlay-header">
+    <span class="title">Saved Graphs</span>
+    <div id="graph-overlay-nav">
+      <button id="graphPrevBtn">&larr; Prev</button>
+      <span id="graph-index">-- / --</span>
+      <button id="graphNextBtn">Next &rarr;</button>
+    </div>
+  </div>
+  <div id="graph-cy"><canvas id="graph-canvas"></canvas></div>
+  <div id="graph-overlay-empty" style="display: none;">No saved graphs yet -- press Space with images detected.</div>
+  <div id="graph-overlay-footer">t: toggle &nbsp;|&nbsp; &larr;/&rarr;: browse history &nbsp;|&nbsp; space: capture (auto-shows newest)</div>
+</div>
+
+<script type="module">
+  import * as THREE from "three";
+  import { MindARThree } from "mindar-image-three";
+
+  const maxTrack = 31
+  const trackedState = new Map();
+  const targetListEl = document.getElementById("target-list");
+  const logEl = document.getElementById("log");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const fpsEl = document.getElementById("fps");
+  const targetCountEl = document.getElementById("target-count");
+  const maxTrackEl = document.getElementById("maxtrack-val");
+
+  const manifest = await fetch("./target-manifest.json").then((r) => {
+    if (!r.ok) throw new Error(`Could not load target-manifest.json (${r.status})`);
+    return r.json();
+  });
+
+  targetCountEl.textContent = manifest.length;
+  maxTrackEl.textContent = maxTrack;
+  targetListEl.textContent = "";
+
+  function renderStatusPanel(colorByImageId) {
+    targetListEl.innerHTML = "";
+    manifest.forEach(({ index, imageId }) => {
+      const state = trackedState.get(index);
+      const row = document.createElement("div");
+      row.className = "target-row" + (state?.detected ? " is-detected" : "");
+      const dotColor = state?.detected && colorByImageId?.get(imageId);
+      const dotStyle = dotColor ? ` style="background:#${dotColor.toString(16).padStart(6, "0")};box-shadow:0 0 6px #${dotColor.toString(16).padStart(6, "0")}"` : "";
+      row.innerHTML = `<span class="dot${state?.detected ? " detected" : ""}"${dotStyle}></span><span class="id">[${index}] ${imageId}</span>`;
+      targetListEl.appendChild(row);
+    });
+  }
+
+  function log(message, cls) {
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    const t = new Date().toLocaleTimeString();
+    line.textContent = `${t}  ${message}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function addDebugBorder(anchor, aspectRatio) {
+    const geometry = new THREE.PlaneGeometry(1, aspectRatio);
+    const edges = new THREE.EdgesGeometry(geometry);
+    const border = new THREE.LineSegments(
+      edges,
+      new THREE.LineBasicMaterial({ color: 0x4a4f57, linewidth: 2 }) // gray = not detected
+    );
+    anchor.group.add(border);
+    return border;
+  }
+
+  const bordersByIndex = new Map(); // index border for live color updates
+
+  const mindarThree = new MindARThree({
+    container: document.querySelector("#container"),
+    imageTargetSrc: "./targets.mind",
+    maxTrack,
+    uiScanning: "no",   // removes MindAR's default corner-bracket scanning overlay.loading, abd error log
+    uiLoading: "no",    
+    uiError: "no",
+
+    warmupTolerance: 0.5,
+    missTolerance: 0.5,
+  });
+
+  manifest.forEach(({ index, imageId, aspect }) => {
+    const anchor = mindarThree.addAnchor(index);
+    const border = addDebugBorder(anchor, aspect ?? 1);
+    bordersByIndex.set(index, border);
+
+    trackedState.set(index, { imageId, detected: false });
+
+    anchor.onTargetFound = () => {
+      trackedState.set(index, { imageId, detected: true, lastFoundAt: Date.now() });
+      renderStatusPanel();
+      log(`FOUND   [${index}] ${imageId}`, "found");
+    };
+
+    anchor.onTargetLost = () => {
+      const prev = trackedState.get(index) ?? { imageId };
+      trackedState.set(index, { ...prev, detected: false, lastLostAt: Date.now() });
+      border.material.color.set(0x4a4f57); // back to gray immediately on loss
+      renderStatusPanel();
+      log(`LOST    [${index}] ${imageId}`, "lost");
+    };
+  });
+
+  renderStatusPanel();
+
+  const { renderer, scene, camera } = mindarThree;
+
+  let frameCount = 0;
+  let lastFpsUpdate = performance.now();
+
+  startBtn.addEventListener("click", async () => {
+    startBtn.disabled = true;
+    log("Starting camera + tracker...");
+    try {
+      await mindarThree.start();
+      renderer.setAnimationLoop(() => {
+        renderer.render(scene, camera);
+        updateGroupColorsLive();
+
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsUpdate >= 500) {
+          const fps = (frameCount * 1000) / (now - lastFpsUpdate);
+          fpsEl.textContent = fps.toFixed(0);
+          frameCount = 0;
+          lastFpsUpdate = now;
+        }
+      });
+      stopBtn.disabled = false;
+      log(`Tracker running. ${manifest.length} targets loaded, maxTrack=${maxTrack}.`);
+    } catch (err) {
+      log(`ERROR: ${err.message}`, "lost");
+      startBtn.disabled = false;
+    }
+  });
+
+  stopBtn.addEventListener("click", () => {
+    mindarThree.stop();
+    renderer.setAnimationLoop(null);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    log("Tracker stopped.");
+  });
+
+  
+  // Fixed radius in on-screen PIXELS (not 3D world units)  estimate how far
+  // apart two borders are. Tune this against your actual camera resolution.
+  const PROXIMITY_RADIUS = 200;
+
+  // Distinct colors cycled per group, in render order.
+  const GROUP_COLORS = [
+    0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4,
+    0x46f0f0, 0xf032e6, 0xfabebe, 0xbcf60c, 0xffe119,
+  ];
+  const NOT_DETECTED_COLOR = 0x4a4f57;
+
+  function distance2D(a, b) {
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Projects a tracked anchor's position from 3D world space onto the 2D
+  // screen, in actual pixel coordinates (0,0 = top-left of the video feed).
+  function projectToScreenPixels(anchor) {
+    const worldPos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    anchor.group.matrixWorld.decompose(worldPos, quat, scale);
+
+    const ndc = worldPos.clone().project(camera); // normalized device coords, range -1..1
+
+    const size = new THREE.Vector2();
+    renderer.getSize(size);
+
+    return {
+      x: (ndc.x * 0.5 + 0.5) * size.x,
+      y: (1 - (ndc.y * 0.5 + 0.5)) * size.y, // flip Y: NDC is bottom-up, screen is top-down
+    };
+  }
+
+  // Simple union-find for connected components.
+  function findGroups(nodeIds, edges) {
+    const parent = new Map(nodeIds.map((id) => [id, id]));
+    function find(x) {
+      while (parent.get(x) !== x) {
+        parent.set(x, parent.get(parent.get(x)));
+        x = parent.get(x);
+      }
+      return x;
+    }
+    function union(a, b) {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    }
+    edges.forEach(([a, b]) => union(a, b));
+
+    const groups = new Map();
+    nodeIds.forEach((id) => {
+      const root = find(id);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(id);
+    });
+    return [...groups.values()];
+  }
+
+  // Computes the current proximity graph from whatever's detected right now.
+  // Returns positioned entries (with index/imageId/screen position), edges
+  // (as [imageId, imageId] pairs), and groups (arrays of imageId).
+  function computeCurrentGroups() {
+    const present = [...trackedState.entries()]
+      .filter(([, state]) => state.detected)
+      .map(([index, state]) => ({ index, imageId: state.imageId }));
+
+    const positioned = present.map(({ index, imageId }) => {
+      const anchor = mindarThree.anchors[index];
+      return { index, imageId, position: projectToScreenPixels(anchor) };
+    });
+
+    const edges = [];
+    for (let i = 0; i < positioned.length; i++) {
+      for (let j = i + 1; j < positioned.length; j++) {
+        const d = distance2D(positioned[i].position, positioned[j].position);
+        if (d <= PROXIMITY_RADIUS) {
+          edges.push([positioned[i].imageId, positioned[j].imageId]);
+        }
+      }
+    }
+
+    const nodeIds = positioned.map((p) => p.imageId);
+    const groups = findGroups(nodeIds, edges);
+
+    return { positioned, edges, groups };
+  }
+
+  // Recolors every border each frame based on current group membership --
+  // this is the live preview. Not-detected images stay neutral gray.
+  let lastPanelUpdate = 0;
+  function updateGroupColorsLive() {
+    const { positioned, groups } = computeCurrentGroups();
+
+    // imageId -> assigned color, based on which group it landed in this frame
+    const colorByImageId = new Map();
+    groups.forEach((group, i) => {
+      const color = GROUP_COLORS[i % GROUP_COLORS.length];
+      group.forEach((imageId) => colorByImageId.set(imageId, color));
+    });
+
+    positioned.forEach(({ index, imageId }) => {
+      const border = bordersByIndex.get(index);
+      if (border) border.material.color.set(colorByImageId.get(imageId));
+    });
+
+    // Reset borders for anything not currently detected back to neutral gray
+    // (onTargetLost already does this once, but this keeps it authoritative
+    // every frame in case of any state edge cases).
+    trackedState.forEach((state, index) => {
+      if (!state.detected) {
+        const border = bordersByIndex.get(index);
+        if (border) border.material.color.set(NOT_DETECTED_COLOR);
+      }
+    });
+
+    // Throttle the status-panel DOM update to ~5x/sec instead of every
+    // frame -- the border colors above still update at full frame rate.
+    const now = performance.now();
+    if (now - lastPanelUpdate > 200) {
+      renderStatusPanel(colorByImageId);
+      lastPanelUpdate = now;
+    }
+  }
+
+  async function captureAndGroup() {
+    const { positioned, edges, groups } = computeCurrentGroups();
+
+    if (positioned.length === 0) {
+      log("SPACE pressed -- no images currently detected, nothing to capture.", "lost");
+      return;
+    }
+
+    const nodeIds = positioned.map((p) => p.imageId);
+
+    log(`SPACE pressed -- ${positioned.length} images detected, ${edges.length} proximity edges, ${groups.length} group(s):`, "found");
+    groups.forEach((group, i) => {
+      log(`  Group ${i + 1}: ${group.join(", ")}`, "found");
+    });
+
+    // Print every pairwise distance to the visible log too, not just console,
+    // so it's easy to see why pairs did/didn't connect without devtools.
+    for (let i = 0; i < positioned.length; i++) {
+      for (let j = i + 1; j < positioned.length; j++) {
+        const d = distance2D(positioned[i].position, positioned[j].position);
+        const connected = d <= PROXIMITY_RADIUS;
+        log(`  ${positioned[i].imageId} <-> ${positioned[j].imageId}: ${d.toFixed(0)}px ${connected ? "(connected)" : "(not connected)"}`, connected ? "found" : "lost");
+      }
+    }
+
+    console.log("Capture snapshot:", { nodes: nodeIds, edges, groups });
+
+    // Save to the backend. Edge shape ({source, target}) matches Cytoscape's
+    // own edge data format directly, so the slideshow page can consume it
+    // with no reshaping.
+    const payload = {
+      nodes: nodeIds,
+      edges: edges.map(([source, target]) => ({ source, target })),
+    };
+
+    try {
+      const res = await fetch("/api/graphs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { graph } = await res.json();
+      log("Saved to server.", "found");
+
+      // Append locally and immediately show it -- Space acts as both
+      // "save" and "reveal what I just captured" in one press.
+      savedGraphs.push(graph);
+      showOverlay(savedGraphs.length - 1);
+    } catch (err) {
+      log(`Failed to save to server: ${err.message}`, "lost");
+    }
+
+    return { nodes: nodeIds, edges, groups };
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (event.code === "Space") {
+      event.preventDefault(); // stop the page from scrolling on spacebar
+      captureAndGroup();
+    }
+  });
+
+  // Saved-graph viewer (toggle with 't', browse with arrows)
+
+  const overlayEl = document.getElementById("graph-overlay");
+  const graphCyEl = document.getElementById("graph-cy");
+  const graphCanvas = document.getElementById("graph-canvas");
+  const gctx = graphCanvas.getContext("2d");
+  const graphEmptyEl = document.getElementById("graph-overlay-empty");
+  const graphIndexEl = document.getElementById("graph-index");
+  const graphPrevBtn = document.getElementById("graphPrevBtn");
+  const graphNextBtn = document.getElementById("graphNextBtn");
+
+  let savedGraphs = []; // oldest -> newest, populated on load + appended on save
+  let currentGraphIndex = -1;
+
+  let gNodes = [];
+  let gEdges = [];
+  let gAnimHandle = null;
+  let gZoom = 1, gPanX = 0, gPanY = 0;
+  let gDraggingNode = null, gIsPanning = false, gPanStart = { x: 0, y: 0 }, gPanOrigin = { x: 0, y: 0 };
+
+  const G_NODE_SIZE = 56;
+
+  function resizeGraphCanvas() {
+    graphCanvas.width = graphCyEl.clientWidth;
+    graphCanvas.height = graphCyEl.clientHeight;
+  }
+  window.addEventListener("resize", resizeGraphCanvas);
+
+  function gScreenToWorld(pos) {
+    return { x: (pos.x - gPanX) / gZoom, y: (pos.y - gPanY) / gZoom };
+  }
+  function gMousePos(e) {
+    const rect = graphCanvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+  function gFindNodeAt(worldPos) {
+    for (const n of gNodes) {
+      const halfW = (n.w ?? G_NODE_SIZE) / 2, halfH = (n.h ?? G_NODE_SIZE) / 2;
+      if (Math.abs(worldPos.x - n.x) < halfW && Math.abs(worldPos.y - n.y) < halfH) return n;
+    }
+    return null;
+  }
+  graphCanvas.addEventListener("mousedown", (e) => {
+    const hit = gFindNodeAt(gScreenToWorld(gMousePos(e)));
+    if (hit) {
+      gDraggingNode = hit;
+    } else {
+      gIsPanning = true;
+      gPanStart = { x: e.clientX, y: e.clientY };
+      gPanOrigin = { x: gPanX, y: gPanY };
+    }
+  });
+  graphCanvas.addEventListener("mousemove", (e) => {
+    if (gDraggingNode) {
+      const w = gScreenToWorld(gMousePos(e));
+      gDraggingNode.x = w.x;
+      gDraggingNode.y = w.y;
+    } else if (gIsPanning) {
+      gPanX = gPanOrigin.x + (e.clientX - gPanStart.x);
+      gPanY = gPanOrigin.y + (e.clientY - gPanStart.y);
+    }
+  });
+  window.addEventListener("mouseup", () => { gDraggingNode = null; gIsPanning = false; });
+  graphCanvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const mousePos = gMousePos(e);
+    const before = gScreenToWorld(mousePos);
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    gZoom = Math.min(Math.max(gZoom * factor, 0.2), 4);
+    gPanX = mousePos.x - before.x * gZoom;
+    gPanY = mousePos.y - before.y * gZoom;
+  }, { passive: false });
+
+  function gDraw() {
+    gctx.setTransform(1, 0, 0, 1, 0, 0);
+    gctx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+    gctx.setTransform(gZoom, 0, 0, gZoom, gPanX, gPanY);
+
+    gctx.strokeStyle = "rgba(230,232,235,0.35)";
+    gctx.lineWidth = 2 / gZoom;
+    for (const e of gEdges) {
+      gctx.beginPath();
+      gctx.moveTo(e.source.x, e.source.y);
+      gctx.lineTo(e.target.x, e.target.y);
+      gctx.stroke();
+    }
+
+    for (const n of gNodes) {
+      const w = n.loaded ? n.w : G_NODE_SIZE;
+      const h = n.loaded ? n.h : G_NODE_SIZE;
+
+      if (n.imgEl && n.loaded) {
+        gctx.drawImage(n.imgEl, n.x - w / 2, n.y - h / 2, w, h);
+      } else if (n.failed) {
+        // Draw a red X for failed image loads. 
+        gctx.fillStyle = "#3a1a1a";
+        gctx.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+        gctx.strokeStyle = "#e0575b";
+        gctx.lineWidth = 2 / gZoom;
+        gctx.beginPath();
+        gctx.moveTo(n.x - w / 4, n.y - h / 4);
+        gctx.lineTo(n.x + w / 4, n.y + h / 4);
+        gctx.moveTo(n.x + w / 4, n.y - h / 4);
+        gctx.lineTo(n.x - w / 4, n.y + h / 4);
+        gctx.stroke();
+      } else {
+        gctx.fillStyle = "#2a2e33";
+        gctx.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+      }
+      gctx.strokeStyle = "#0b0d10";
+      gctx.lineWidth = 2 / gZoom;
+      gctx.strokeRect(n.x - w / 2, n.y - h / 2, w, h);
+    }
+  }
+  function gAnimate() {
+    gDraw();
+    gAnimHandle = requestAnimationFrame(gAnimate);
+  }
+
+  async function loadSavedGraphs() {
+    try {
+      const res = await fetch("/api/graphs");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      savedGraphs = await res.json();
+      log(`Loaded ${savedGraphs.length} saved graph(s) from server.`);
+    } catch (err) {
+      log(`Failed to load saved graphs: ${err.message}`, "lost");
+    }
+  }
+
+  function renderGraphSlide(index) {
+    if (savedGraphs.length === 0) {
+      graphCyEl.style.display = "none";
+      graphEmptyEl.style.display = "flex";
+      graphIndexEl.textContent = "0 / 0";
+      return;
+    }
+    graphCyEl.style.display = "block";
+    graphEmptyEl.style.display = "none";
+    resizeGraphCanvas();
+
+    currentGraphIndex = Math.max(0, Math.min(index, savedGraphs.length - 1));
+    const graph = savedGraphs[currentGraphIndex];
+    graphIndexEl.textContent = `${currentGraphIndex + 1} / ${savedGraphs.length}`;
+
+    gZoom = 1; gPanX = 0; gPanY = 0;
+
+    // Position nodes in a circle around the center of the canvas, with radius
+    // proportional to the number of nodes (so more nodes spread out more). 
+    const count = graph.nodes.length;
+    const layoutRadius = Math.max(120, (count * G_NODE_SIZE) / (2 * Math.PI));
+
+    const byId = new Map();
+    gNodes = graph.nodes.map((id, i) => {
+      const angle = (i / count) * Math.PI * 2;
+      const node = {
+        id,
+        x: graphCanvas.width / 2 + Math.cos(angle) * layoutRadius,
+        y: graphCanvas.height / 2 + Math.sin(angle) * layoutRadius,
+        loaded: false, failed: false, imgEl: null,
+      };
+      const url = graph.nodeImages?.[id];
+      if (url) {
+        const img = new Image();
+        img.onload = () => {
+          node.loaded = true;
+          // Fit the node box to the image's real aspect ratio instead of
+          // forcing it into a square -- longest side caps at G_NODE_SIZE.
+          const aspect = img.naturalWidth / img.naturalHeight || 1;
+          if (aspect >= 1) {
+            node.w = G_NODE_SIZE;
+            node.h = G_NODE_SIZE / aspect;
+          } else {
+            node.h = G_NODE_SIZE;
+            node.w = G_NODE_SIZE * aspect;
+          }
+        };
+        img.onerror = () => {
+          node.failed = true;
+          console.error(`Failed to load node image for ${id}: ${url}`);
+          log(`Image load failed for [${id}] -- see console for URL`, "lost");
+        };
+        img.src = url;
+        node.imgEl = img;
+      } else {
+        console.warn(`No nodeImages entry for ${id} -- server didn't provide a URL`);
+      }
+      byId.set(id, node);
+      return node;
+    });
+    gEdges = graph.edges
+      .map((e) => ({ source: byId.get(e.source), target: byId.get(e.target) }))
+      .filter((e) => e.source && e.target);
+
+    if (gAnimHandle) cancelAnimationFrame(gAnimHandle);
+    gAnimate();
+  }
+
+  function showOverlay(index) {
+    overlayEl.classList.add("visible");
+    renderGraphSlide(index);
+  }
+
+  function hideOverlay() {
+    overlayEl.classList.remove("visible");
+    if (gAnimHandle) {
+      cancelAnimationFrame(gAnimHandle);
+      gAnimHandle = null;
+    }
+  }
+
+  function toggleOverlay() {
+    if (overlayEl.classList.contains("visible")) {
+      hideOverlay();
+    } else {
+      showOverlay(savedGraphs.length - 1); // default to newest
+    }
+  }
+
+  graphPrevBtn.addEventListener("click", () => renderGraphSlide(currentGraphIndex - 1));
+  graphNextBtn.addEventListener("click", () => renderGraphSlide(currentGraphIndex + 1));
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "t" || event.key === "T") {
+      toggleOverlay();
+    } else if (overlayEl.classList.contains("visible")) {
+      if (event.key === "ArrowLeft") renderGraphSlide(currentGraphIndex - 1);
+      if (event.key === "ArrowRight") renderGraphSlide(currentGraphIndex + 1);
+    }
+  });
+
+  loadSavedGraphs();
+</script>
+</body>
+</html>

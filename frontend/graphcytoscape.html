@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Culture I/O</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #ffffff; }
+  #cy { width: 100vw; height: 100vh; }
+  #status {
+    position: fixed; top: 10px; left: 10px; color: #333;
+    font-family: sans-serif; font-size: 14px; z-index: 10;
+  }
+
+  #image-popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #image-popup-overlay.open { display: flex; }
+  #image-popup-img {
+    max-width: 90vw;
+    max-height: 80vh;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+  #image-popup-caption {
+    color: #fff;
+    font-family: sans-serif;
+    margin-top: 15px;
+    max-width: 80vw;
+    text-align: center;
+    font-size: 1rem;
+  }
+  #image-popup-close {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 2.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+</style>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+</head>
+<body>
+<div id="status">Loading graph data...</div>
+<div id="cy"></div>
+
+<div id="image-popup-overlay">
+  <button id="image-popup-close" aria-label="Close">&times;</button>
+  <img id="image-popup-img" alt="">
+  <div id="image-popup-caption"></div>
+</div>
+<script>
+  const imagePopupOverlay = document.getElementById('image-popup-overlay');
+  const imagePopupImg = document.getElementById('image-popup-img');
+  const imagePopupCaption = document.getElementById('image-popup-caption');
+  const imagePopupClose = document.getElementById('image-popup-close');
+
+  function showImagePopup(imgUrl, caption, sceneText) {
+    imagePopupImg.src = imgUrl || '';
+    const lines = [caption, sceneText].filter(t => t && t.trim() !== '');
+    if (lines.length) {
+      imagePopupCaption.textContent = lines.join(' · ');
+      imagePopupCaption.style.display = 'block';
+    } else {
+      imagePopupCaption.textContent = '';
+      imagePopupCaption.style.display = 'none';
+    }
+    imagePopupOverlay.classList.add('open');
+  }
+
+  function hideImagePopup() {
+    imagePopupOverlay.classList.remove('open');
+    imagePopupImg.src = '';
+  }
+
+  imagePopupClose.addEventListener('click', hideImagePopup);
+  imagePopupOverlay.addEventListener('click', (e) => {
+    if (e.target === imagePopupOverlay) hideImagePopup();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideImagePopup();
+  });
+</script>
+
+<script>
+  function sceneText(n) {
+    if (!n.sceneSpecific || n.sceneSpecific === "unclassified") return "";
+    const pct = Math.round((n.sceneConfidence || 0) * 100);
+    return `${n.sceneSpecific} (${pct}%)`;
+  }
+
+  // How often to check the server for new submissions. Just a polling
+  // interval against the existing /api/graph-data endpoint -- no server
+  // changes needed. Bump this up/down if you want fresher/less-chatty updates.
+  const POLL_MS = 15000;
+
+  function flashStatus(msg, revertTo) {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    if (revertTo) setTimeout(() => { el.textContent = revertTo; }, 4000);
+  }
+
+  // Turns an /api/graph-data response into cytoscape elements (nodes/edges).
+  function buildElements(nodes, edges) {
+    const imageNodes = nodes.filter(n => !n.isHub);
+    const hubNodesData = nodes.filter(n => n.isHub);
+
+    // One compound "parent" node per unique scene SUBcategory -- Cytoscape
+    // draws these as a labeled bounding box and keeps children clustered
+    // inside it. This is the fine-grained grouping layer.
+    const subcategories = [...new Set(imageNodes.map(n => n.sceneSpecific || "unclassified"))];
+    const categoryNodes = subcategories.map(cat => ({
+      data: { id: `cat:${cat}`, label: cat, isCategory: true }
+    }));
+
+    // Hub nodes -- one per broad category (indoor/outdoor/unclassified).
+    // Images link to these instead of to each other, forming the
+    // connections you actually asked for, based on broad category.
+    const hubElements = hubNodesData.map(h => ({
+      data: { id: h.id, label: h.label, isHub: true, img: h.img }
+    }));
+
+    return [
+      ...categoryNodes,
+      ...hubElements,
+      ...imageNodes.map(n => ({
+        data: {
+          id: n.id, img: n.img, caption: n.caption,
+          sceneSpecific: n.sceneSpecific, sceneConfidence: n.sceneConfidence,
+          parent: `cat:${n.sceneSpecific || "unclassified"}`,
+        }
+      })),
+      ...edges.map(e => ({
+        data: {
+          id: `${e.source}->${e.target}`, source: e.source, target: e.target,
+          confidence: e.confidence,
+        }
+      }))
+    ];
+  }
+
+  let cy;
+
+  function fetchGraphData() {
+    return fetch("/api/graph-data").then(r => r.json());
+  }
+
+  function initCytoscape({ nodes, edges }) {
+    const imageNodes = nodes.filter(n => !n.isHub);
+    const summary = `${imageNodes.length} images, ${edges.length} connections`;
+    document.getElementById("status").textContent = summary;
+
+    const elements = buildElements(nodes, edges);
+
+    cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements,
+        style: [
+          {
+            selector: "node",
+            style: {
+              "background-image": "data(img)",
+              "background-fit": "contain",
+              "background-color": "#ccc",
+              "width": 60,
+              "height": 60,
+              "shape": "rectangle", // no mask -- shows the photo as-is, not clipped into a circle
+              "border-color": "#00000022",
+              // Confidence as visual weight: a more confident scene
+              // classification draws a thicker border (0.3 -> 2px, 1.0 -> 6px).
+              "border-width": "mapData(sceneConfidence, 0.3, 1, 2, 6)"
+            }
+          },
+          {
+            selector: "node[?isCategory]",
+            style: {
+              "shape": "round-rectangle",
+              "background-color": "#f2f2f2",
+              "background-opacity": 0.6,
+              "border-width": 1,
+              "border-color": "#ccc",
+              "label": "data(label)",
+              "color": "#555",
+              "font-size": 13,
+              "text-valign": "top",
+              "text-halign": "center"
+            }
+          },
+          {
+            selector: "node[?isHub]",
+            style: {
+              // Representative photo, not a shape/label pill -- larger and
+              // ringed in orange so it still reads as the cluster's center.
+              "shape": "rectangle",
+              "background-image": "data(img)",
+              "background-fit": "contain",
+              "background-color": "#cccccc",
+              "width": 100,
+              "height": 100,
+              "border-width": 6,
+              "border-color": "#ffaa33",
+              "label": "data(label)",
+              "color": "#333333",
+              "font-size": 14,
+              "font-weight": "bold",
+              "text-valign": "bottom",
+              "text-margin-y": 10
+            }
+          },
+          {
+            selector: "edge",
+            style: {
+              // Confidence controls both thickness and opacity of the
+              // link to a node's broad-category hub.
+              "width": "mapData(confidence, 0, 1, 1, 5)",
+              "line-color": "#8888dd",
+              "opacity": "mapData(confidence, 0, 1, 0.25, 0.9)",
+              "target-arrow-shape": "none",
+              "curve-style": "bezier"
+            }
+          }
+        ],
+        layout: {
+          name: "cose",
+          animate: true,
+          nodeRepulsion: 8000,
+          idealEdgeLength: 120,
+          fit: true,
+          padding: 40
+        }
+      });
+
+    cy.on('tap', 'node', (evt) => {
+      const d = evt.target.data();
+      if (d.isCategory || d.isHub) return;
+      showImagePopup(d.img, d.caption, sceneText(d));
+    });
+
+    cy.on('mouseover', 'node', () => { cy.container().style.cursor = 'pointer'; });
+    cy.on('mouseout', 'node', () => { cy.container().style.cursor = 'default'; });
+
+    startPolling();
+  }
+
+  // Later polls: diff the fresh element set against what's already on the
+  // canvas. Existing nodes are left alone (so dragged/settled positions
+  // don't jump); only genuinely new elements are added, and a short
+  // "cose" layout pass runs on just those new elements so they settle in
+  // without disturbing everything else. Anything no longer returned by
+  // the server (unapproved/deleted) is removed.
+  function refreshGraph({ nodes, edges }) {
+    const elements = buildElements(nodes, edges);
+    const incomingIds = new Set(elements.map(e => e.data.id));
+    const currentIds = new Set(cy.elements().map(e => e.data('id')));
+
+    const toAdd = elements.filter(e => !currentIds.has(e.data.id));
+    const toRemoveIds = [...currentIds].filter(id => !incomingIds.has(id));
+
+    if (toRemoveIds.length) {
+      cy.remove(cy.collection(toRemoveIds.map(id => cy.getElementById(id))));
+    }
+
+    let addedCollection = null;
+    if (toAdd.length) {
+      addedCollection = cy.add(toAdd);
+    }
+
+    const imageNodes = nodes.filter(n => !n.isHub);
+    const summary = `${imageNodes.length} images, ${edges.length} connections`;
+    document.getElementById("status").textContent = summary;
+
+    // Only the truly new image nodes count as "new submissions" for the toast.
+    const newImageCount = toAdd.filter(e => e.data.id && !e.data.isHub && !e.data.isCategory).length;
+    if (newImageCount > 0) {
+      flashStatus(`+${newImageCount} new submission${newImageCount > 1 ? 's' : ''}`, summary);
+      // Settle just the new elements (plus their parent/hub context) into
+      // place with a lightweight layout pass; everything else stays put.
+      const context = addedCollection.union(addedCollection.connectedEdges())
+        .union(addedCollection.connectedEdges().connectedNodes());
+      context.layout({ name: 'cose', animate: true, fit: false, randomize: false, padding: 40 }).run();
+    }
+  }
+
+  function startPolling() {
+    setInterval(() => {
+      fetchGraphData()
+        .then(refreshGraph)
+        .catch(err => console.error("Poll for new submissions failed:", err));
+    }, POLL_MS);
+  }
+
+  fetchGraphData()
+    .then(initCytoscape)
+    .catch(err => {
+      document.getElementById("status").textContent =
+        "Failed to load graph data: " + err.message;
+      console.error(err);
+    });
+</script>
+</body>
+</html>

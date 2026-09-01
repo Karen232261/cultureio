@@ -97,7 +97,6 @@ submitBtn.addEventListener("click", async () => {
  
     const result = await saveResponse.json();
     if (!result.success) throw new Error("Database save failed");
-    // NEW LOGIC: Use the local object URL we already created for the first preview
     const finalPreviewImg = document.getElementById("submitted-img-preview");
     const existingPreview = preview.querySelector("img");
     

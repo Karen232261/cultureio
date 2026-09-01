@@ -29,19 +29,22 @@ const culture_schema = new mongoose.Schema({
         type: String, 
         unique: true, 
     },
-    // Added to support the graphing pages: { scene: {...}, objects: [...] },
-    // filled in by the classifier microservice after upload.
+    // Restored taxonomy shape: { objects: [...], scene: { path: [...] }, primaryCategory }.
+    // Filled in locally (inference.js) after upload.
     classification: {
         type: mongoose.Schema.Types.Mixed,
         default: null // null = not yet classified (used to find old entries needing backfill)
     },
 
-    signature: {
-        type: mongoose.Schema.Types.Mixed,
-        default: null  // null = not yet signed
-    }   
+    // CLIP image embedding (512-dim, L2-normalized), used ONLY for signature
+    // matching via Atlas $vectorSearch (/api/webcam-match). Requires an Atlas
+    // Vector Search index named "clipEmbedding_vector_index" on this field
+    // (cosine similarity, 512 dimensions) -- see server.js comment.
+    clipEmbedding: {
+        type: [Number],
+        default: null
+    }
 
 });
 
 export const CultureModel = mongoose.model('Culture', culture_schema, 'Images');
-

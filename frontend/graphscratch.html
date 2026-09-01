@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Culture I/O</title>
+<style>
+  body { margin: 0; background: #ffffff; overflow: hidden; }
+  canvas { display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #status {
+    position: fixed; top: 10px; left: 10px; color: #333;
+    font-family: sans-serif; font-size: 14px; z-index: 10;
+  }
+
+  #image-popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #image-popup-overlay.open { display: flex; }
+  #image-popup-img {
+    max-width: 90vw;
+    max-height: 80vh;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+  #image-popup-caption {
+    color: #fff;
+    font-family: sans-serif;
+    margin-top: 15px;
+    max-width: 80vw;
+    text-align: center;
+    font-size: 1rem;
+  }
+  #image-popup-close {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 2.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="status">Loading graph data...</div>
+<canvas id="graph"></canvas>
+
+<div id="image-popup-overlay">
+  <button id="image-popup-close" aria-label="Close">&times;</button>
+  <img id="image-popup-img" alt="">
+  <div id="image-popup-caption"></div>
+</div>
+<script>
+  const imagePopupOverlay = document.getElementById('image-popup-overlay');
+  const imagePopupImg = document.getElementById('image-popup-img');
+  const imagePopupCaption = document.getElementById('image-popup-caption');
+  const imagePopupClose = document.getElementById('image-popup-close');
+
+
+  // function showImagePopup(imgUrl, caption, sceneText) {
+  function showImagePopup(imgUrl, caption) {
+    imagePopupImg.src = imgUrl || '';
+    const lines = [caption].filter(t => t && t.trim() !== '');
+    // const lines = [caption, sceneText].filter(t => t && t.trim() !== '');
+    // if (lines.length) {
+    //   imagePopupCaption.textContent = lines.join(' · ');
+    //   imagePopupCaption.style.display = 'block';
+    // } else {
+    //   imagePopupCaption.textContent = '';
+    //   imagePopupCaption.style.display = 'none';
+    // }
+    imagePopupCaption.style.display = 'block';
+
+    imagePopupOverlay.classList.add('open');
+  }
+
+  function hideImagePopup() {
+    imagePopupOverlay.classList.remove('open');
+    imagePopupImg.src = '';
+  }
+
+  imagePopupClose.addEventListener('click', hideImagePopup);
+  imagePopupOverlay.addEventListener('click', (e) => {
+    if (e.target === imagePopupOverlay) hideImagePopup();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideImagePopup();
+  });
+</script>
+
+<script>
+let nodes = [];
+let edges = [];
+
+// physics parameters
+const repulsionStrength = 4000;
+const springLength = 180;
+const springStrength = 0.01;
+const damping = 0.85;
+const timeStep = 0.5;
+const nodeRadius = 22;
+// Max dimension (in either direction) a photo node is scaled to once loaded --
+// images keep their natural aspect ratio instead of being forced into a circle.
+const maxNodeDimension = 44;
+// Hubs render larger than regular nodes so the representative photo reads
+// as the center of its cluster.
+const maxHubDimension = 76;
+
+// Cluster force parameters: how strongly nodes get pulled toward their
+// scene category's anchor point. Actual per-node strength is scaled by
+// that node's classification confidence (see applyForces below) --
+// a confident label pulls hard toward the cluster, an unsure one barely
+// pulls at all and drifts near the edges instead.
+const clusterBaseStrength = 0.15;
+const clusterMaxStrength = 1.2;
+
+function sceneText(n) {
+  if (!n.sceneSpecific || n.sceneSpecific === "unclassified") return "";
+  const pct = Math.round((n.sceneConfidence || 0) * 100);
+  return `${n.sceneSpecific} (${pct}%)`;
+}
+
+// Deterministic hash so the same category always gets the same anchor
+// spot across reloads, instead of jumping around each time.
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (Math.imul(h, 31) + str.charCodeAt(i)) | 0;
+  return h;
+}
+
+const CLUSTER_RADIUS = 500;
+const clusterAnchors = new Map();
+function anchorFor(category) {
+  if (!clusterAnchors.has(category)) {
+    const h = hashString(category);
+    const angle = ((h % 10000) / 10000) * Math.PI * 2;
+    clusterAnchors.set(category, {
+      x: canvas.width / 2 + Math.cos(angle) * CLUSTER_RADIUS,
+      y: canvas.height / 2 + Math.sin(angle) * CLUSTER_RADIUS,
+    });
+  }
+  return clusterAnchors.get(category);
+}
+
+// HTML Canvas setup
+const canvas = document.getElementById('graph');
+const ctx = canvas.getContext('2d');
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+
+let zoom = 1;
+let panX = 0;
+let panY = 0;
+const minZoom = 0.05;
+const maxZoom = 5;
+
+function screenToWorld(screenPos) {
+  return {
+    x: (screenPos.x - panX) / zoom,
+    y: (screenPos.y - panY) / zoom
+  };
+}
+
+// Dragging / panning state
+let draggingNode = null;
+let offsetX = 0;
+let offsetY = 0;
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let panOrigin = { x: 0, y: 0 };
+
+// Distinguishes a click (open the popup) from a drag (move the node/pan).
+let mouseDownPos = null;
+let dragMoved = false;
+
+function findNodeAt(worldPos) {
+  for (const node of nodes) {
+    const dx = worldPos.x - node.x;
+    const dy = worldPos.y - node.y;
+    const size = node.isHub ? maxHubDimension : maxNodeDimension;
+    const halfW = (node.drawW || size) / 2;
+    const halfH = (node.drawH || size) / 2;
+    if (Math.abs(dx) < halfW && Math.abs(dy) < halfH) return node;
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  mouseDownPos = { x: e.clientX, y: e.clientY };
+  dragMoved = false;
+  const worldPos = screenToWorld(getMousePos(e));
+  const hit = findNodeAt(worldPos);
+  if (hit) {
+    draggingNode = hit;
+    offsetX = worldPos.x - hit.x;
+    offsetY = worldPos.y - hit.y;
+    hit.vx = 0;
+    hit.vy = 0;
+  } else {
+    // Didn't hit a node — drag the background instead (pan the camera).
+    isPanning = true;
+    panStart = { x: e.clientX, y: e.clientY };
+    panOrigin = { x: panX, y: panY };
+  }
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if ((draggingNode || isPanning) && mouseDownPos) {
+    const dx = e.clientX - mouseDownPos.x;
+    const dy = e.clientY - mouseDownPos.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 3) dragMoved = true;
+  }
+
+  if (draggingNode) {
+    const worldPos = screenToWorld(getMousePos(e));
+    draggingNode.x = worldPos.x - offsetX;
+    draggingNode.y = worldPos.y - offsetY;
+  } else if (isPanning) {
+    panX = panOrigin.x + (e.clientX - panStart.x);
+    panY = panOrigin.y + (e.clientY - panStart.y);
+  } else {
+    // Idle — show a pointer cursor when hovering a clickable node.
+    const worldPos = screenToWorld(getMousePos(e));
+    canvas.style.cursor = findNodeAt(worldPos) ? 'pointer' : 'grab';
+  }
+});
+
+canvas.addEventListener('mouseup', () => {
+  // A click (no drag) on a node opens the popup instead of just releasing it.
+  if (!dragMoved && draggingNode && !draggingNode.isHub) {
+    showImagePopup(
+      draggingNode.imgEl ? draggingNode.imgEl.src : '',
+      draggingNode.caption,
+      // sceneText(draggingNode)
+    );
+  }
+  draggingNode = null;
+  isPanning = false;
+  canvas.style.cursor = 'grab';
+});
+canvas.addEventListener('mouseleave', () => {
+  draggingNode = null;
+  isPanning = false;
+  canvas.style.cursor = 'grab';
+});
+
+// Scroll to zoom, centered on the cursor.
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const mousePos = getMousePos(e);
+  const worldBefore = screenToWorld(mousePos);
+
+  const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  zoom = Math.min(Math.max(zoom * zoomFactor, minZoom), maxZoom);
+
+  // Keep the point under the cursor fixed in place while zooming.
+  panX = mousePos.x - worldBefore.x * zoom;
+  panY = mousePos.y - worldBefore.y * zoom;
+}, { passive: false });
+
+function getMousePos(evt) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: evt.clientX - rect.left,
+    y: evt.clientY - rect.top
+  };
+}
+
+// Force Simulation
+function applyForces() {
+  for (let i = 0; i < nodes.length; i++) {
+    nodes[i].ax = 0;
+    nodes[i].ay = 0;
+  }
+
+  // Repulsion
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const dx = nodes[j].x - nodes[i].x;
+      const dy = nodes[j].y - nodes[i].y;
+      const distSq = dx * dx + dy * dy || 0.01;
+      const dist = Math.sqrt(distSq);
+      const force = repulsionStrength / distSq;
+
+      const fx = force * (dx / dist);
+      const fy = force * (dy / dist);
+
+      nodes[i].ax -= fx;
+      nodes[i].ay -= fy;
+      nodes[j].ax += fx;
+      nodes[j].ay += fy;
+    }
+  }
+
+  // Springs -- pull each image toward its broad-category hub. Confidence
+  // scales strength per edge: a confident classification pulls hard
+  // toward the hub, an unsure one barely pulls and drifts further out.
+  for (const edge of edges) {
+    const source = edge.sourceNode;
+    const target = edge.targetNode;
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    const displacement = dist - springLength;
+    const strength = springStrength * (0.3 + 1.7 * (edge.confidence || 0));
+    const force = strength * displacement;
+
+    const fx = force * (dx / dist);
+    const fy = force * (dy / dist);
+
+    source.ax += fx;
+    source.ay += fy;
+    target.ax -= fx;
+    target.ay -= fy;
+  }
+
+  // Cluster attraction: pull each image toward its scene SUBcategory's
+  // anchor point (finer-grained than the hub above), also confidence-scaled.
+  for (const node of nodes) {
+    if (node.isHub) continue;
+    const anchor = anchorFor(node.sceneSpecific || "unclassified");
+    const strength = clusterBaseStrength +
+      (node.sceneConfidence || 0) * (clusterMaxStrength - clusterBaseStrength);
+    node.ax += (anchor.x - node.x) * strength * 0.01;
+    node.ay += (anchor.y - node.y) * strength * 0.01;
+  }
+}
+
+function updatePositions() {
+  for (const node of nodes) {
+    if (node === draggingNode) continue;
+    node.vx = (node.vx + node.ax * timeStep) * damping;
+    node.vy = (node.vy + node.ay * timeStep) * damping;
+    node.x += node.vx * timeStep;
+    node.y += node.vy * timeStep;
+  }
+}
+
+// Drawing
+function drawGraph() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(zoom, 0, 0, zoom, panX, panY);
+
+  // Draw edges -- opacity reflects confidence, same as their spring strength
+  for (const edge of edges) {
+    const s = edge.sourceNode;
+    const t = edge.targetNode;
+    ctx.strokeStyle = `rgba(136,136,255,${0.15 + 0.6 * (edge.confidence || 0)})`;
+    ctx.lineWidth = (0.5 + 2 * (edge.confidence || 0)) / zoom;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(t.x, t.y);
+    ctx.stroke();
+  }
+  // Draw nodes
+  for (const node of nodes) {
+    if (node.isHub) {
+      if (node.imgEl && node.loaded) {
+        if (!node.drawW) {
+          const scale = maxHubDimension / Math.max(node.imgEl.naturalWidth, node.imgEl.naturalHeight);
+          node.drawW = node.imgEl.naturalWidth * scale;
+          node.drawH = node.imgEl.naturalHeight * scale;
+        }
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        ctx.shadowBlur = 10 / zoom;
+        ctx.shadowOffsetY = 3 / zoom;
+        ctx.drawImage(
+          node.imgEl,
+          node.x - node.drawW / 2, node.y - node.drawH / 2,
+          node.drawW, node.drawH
+        );
+        ctx.restore();
+
+        // Colored ring around the photo -- the hub's visual distinction
+        // from an ordinary photo node, instead of a shape swap.
+        ctx.strokeStyle = '#ffaa33';
+        ctx.lineWidth = 3 / zoom;
+        ctx.strokeRect(
+          node.x - node.drawW / 2, node.y - node.drawH / 2,
+          node.drawW, node.drawH
+        );
+      } else {
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(
+          node.x - maxHubDimension / 2, node.y - maxHubDimension / 2,
+          maxHubDimension, maxHubDimension
+        );
+      }
+
+      ctx.font = `bold ${13 / zoom}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#333';
+      const labelY = node.y + (node.drawH || maxHubDimension) / 2 + 16 / zoom;
+      ctx.fillText(node.label, node.x, labelY);
+      continue;
+    }
+
+    if (node.imgEl && node.loaded) {
+      // Preserve the photo's natural aspect ratio -- no circular (or any) mask.
+      if (!node.drawW) {
+        const scale = maxNodeDimension / Math.max(node.imgEl.naturalWidth, node.imgEl.naturalHeight);
+        node.drawW = node.imgEl.naturalWidth * scale;
+        node.drawH = node.imgEl.naturalHeight * scale;
+      }
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+      ctx.shadowBlur = 6 / zoom;
+      ctx.shadowOffsetY = 2 / zoom;
+      ctx.drawImage(
+        node.imgEl,
+        node.x - node.drawW / 2, node.y - node.drawH / 2,
+        node.drawW, node.drawH
+      );
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#ccc';
+      ctx.fillRect(
+        node.x - maxNodeDimension / 2, node.y - maxNodeDimension / 2,
+        maxNodeDimension, maxNodeDimension
+      );
+    }
+  }
+}
+
+function animate() {
+  applyForces();
+  updatePositions();
+  drawGraph();
+  requestAnimationFrame(animate);
+}
+
+// How often to check the server for new submissions. Just a polling
+// interval against the existing /api/graph-data endpoint -- no server
+// changes needed. Bump this up/down if you want fresher/less-chatty updates.
+const POLL_MS = 15000;
+
+// nodes/edges are keyed by mongoId (the API's node id) so that adding or
+// removing a node never has to reindex anything else. Edges hold direct
+// references to their node objects (sourceNode/targetNode) rather than
+// array indices, for the same reason.
+const nodesById = new Map();
+
+function flashStatus(msg, revertTo) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  if (revertTo) setTimeout(() => { el.textContent = revertTo; }, 4000);
+}
+
+function fetchGraphData() {
+  return fetch("/api/graph-data").then(r => r.json());
+}
+
+// Builds a fresh node object for a node the sim hasn't seen before.
+// Spawns near the center at a random angle -- the existing spring/repulsion
+// forces naturally carry it out to the right spot within a second or two,
+// same as how the very first load looks.
+function makeNode(n) {
+  const angle = Math.random() * Math.PI * 2;
+  const node = {
+    mongoId: n.id,
+    caption: n.caption,
+    isHub: n.isHub,
+    label: n.label,
+    sceneBroad: n.sceneBroad,
+    sceneSpecific: n.sceneSpecific,
+    sceneConfidence: n.sceneConfidence,
+    x: canvas.width / 2 + Math.cos(angle) * 150,
+    y: canvas.height / 2 + Math.sin(angle) * 150,
+    vx: 0, vy: 0,
+    loaded: false,
+    imgEl: null
+  };
+  if (n.img) {
+    const imgEl = new Image();
+    imgEl.crossOrigin = "anonymous";
+    imgEl.onload = () => {
+      node.loaded = true;
+      const size = node.isHub ? maxHubDimension : maxNodeDimension;
+      const scale = size / Math.max(imgEl.naturalWidth, imgEl.naturalHeight);
+      node.drawW = imgEl.naturalWidth * scale;
+      node.drawH = imgEl.naturalHeight * scale;
+    };
+    imgEl.onerror = () => console.error("Failed to load image:", n.img);
+    imgEl.src = n.img;
+    node.imgEl = imgEl;
+  }
+  return node;
+}
+
+function rebuildEdges(apiEdges) {
+  return apiEdges
+    .map(e => ({
+      sourceNode: nodesById.get(e.source),
+      targetNode: nodesById.get(e.target),
+      confidence: e.confidence,
+    }))
+    .filter(e => e.sourceNode && e.targetNode);
+}
+
+function applyGraphData(apiNodes, apiEdges, { isInitial } = {}) {
+  const incomingIds = new Set(apiNodes.map(n => n.id));
+  let newCount = 0;
+
+  // Add/update nodes.
+  for (const n of apiNodes) {
+    if (!nodesById.has(n.id)) {
+      nodesById.set(n.id, makeNode(n));
+      if (!n.isHub) newCount++;
+    } else {
+      // Keep position/velocity/image, just refresh classification-derived fields.
+      const existing = nodesById.get(n.id);
+      existing.sceneBroad = n.sceneBroad;
+      existing.sceneSpecific = n.sceneSpecific;
+      existing.sceneConfidence = n.sceneConfidence;
+      existing.caption = n.caption;
+    }
+  }
+
+  // Drop nodes no longer returned by the server (unapproved/deleted).
+  for (const id of [...nodesById.keys()]) {
+    if (!incomingIds.has(id)) nodesById.delete(id);
+  }
+
+  nodes = [...nodesById.values()];
+  edges = rebuildEdges(apiEdges);
+
+  const summary = `${apiNodes.filter(n => !n.isHub).length} images, ${apiEdges.length} connections`;
+  document.getElementById("status").textContent = summary;
+  if (!isInitial && newCount > 0) {
+    flashStatus(`+${newCount} new submission${newCount > 1 ? 's' : ''}`, summary);
+  }
+}
+
+function startPolling() {
+  setInterval(() => {
+    fetchGraphData()
+      .then(({ nodes: apiNodes, edges: apiEdges }) => applyGraphData(apiNodes, apiEdges))
+      .catch(err => console.error("Poll for new submissions failed:", err));
+  }, POLL_MS);
+}
+
+// Load graph data, build nodes/edges, then start the sim and begin polling for new submissions.
+fetchGraphData()
+  .then(({ nodes: apiNodes, edges: apiEdges }) => {
+    applyGraphData(apiNodes, apiEdges, { isInitial: true });
+    animate();
+    startPolling();
+  })
+  .catch(err => {
+    document.getElementById("status").textContent =
+      "Failed to load graph data: " + err.message;
+    console.error(err);
+  });
+</script>
+</body>
+</html>

@@ -7,8 +7,12 @@ import path from "path";
 import { fileURLToPath } from "node:url";
 import basicAuth from "express-basic-auth";
 
+import { GraphModel } from "./graph_schema.js";
+
+
 import { generatePresignedUrl, generateGetPresignedUrl } from "./s3.js";
 import { CultureModel } from "./culture_schema.js";
+import { loadModels, runYolo, runClip, runSceneClassification, primaryCategoryFrom } from "./inference.js";
 
 dotenv.config();
 
@@ -30,8 +34,12 @@ const adminProtector = basicAuth({
 });
 
 const port = process.env.PORT || 3000;
-const CLASSIFIER_URL = process.env.CLASSIFIER_URL || "http://localhost:8001/classify";
-const SIGNATURE_SERVICE_URL = process.env.SIGNATURE_SERVICE_URL || "http://localhost:8002";
+
+// Name of the Atlas Vector Search index you create in the Atlas UI/CLI on
+// the "clipEmbedding" field (cosine similarity, 512 dimensions). Nothing
+// in this file creates the index -- see culture_schema.js comment.
+const CLIP_VECTOR_INDEX = process.env.CLIP_VECTOR_INDEX || "clipEmbedding_vector_index";
+const WEBCAM_MATCH_MIN_SCORE = Number(process.env.WEBCAM_MATCH_MIN_SCORE || 0.90); // needs calibration against real captures
 
 // Same filename-resolution fallback used in /api/admin/pending, so this
 // stays consistent whether an entry has an s3Url or only an imageId.
@@ -41,10 +49,16 @@ function resolveFilename(doc) {
   return null;
 }
 
-// Calls the Python classifier microservice and saves the result on the doc.
-// Failures are logged, not thrown -- classification is best-effort and
-// should never break an upload or a backfill run. Added so the graphing
-// pages have scene data to cluster images by.
+async function fetchImageBuffer(filename) {
+  const imageUrl = await generateGetPresignedUrl(filename);
+  const res = await fetch(imageUrl);
+  if (!res.ok) throw new Error(`Could not download image (status ${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// Runs YOLO + CLIP taxonomy classification + CLIP embedding locally (no
+// more Python microservice calls) and saves classification + clipEmbedding
+// in one write. clipEmbedding is kept ONLY for /api/webcam-match now.
 async function classifyAndSave(doc) {
   const filename = resolveFilename(doc);
   if (!filename) {
@@ -52,83 +66,56 @@ async function classifyAndSave(doc) {
     return;
   }
   try {
-    const imageUrl = await generateGetPresignedUrl(filename);
+    const imageBuffer = await fetchImageBuffer(filename);
 
-    const res = await fetch(CLASSIFIER_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Classifier-Secret": process.env.CLASSIFIER_SECRET || "",
-      },
-      body: JSON.stringify({ imageUrl }),
+    const [{ objects }, scenePath, clipEmbedding] = await Promise.all([
+      runYolo(imageBuffer),
+      runSceneClassification(imageBuffer),
+      runClip(imageBuffer),
+    ]);
+    const primaryCategory = primaryCategoryFrom(objects, scenePath);
+
+    await CultureModel.findByIdAndUpdate(doc._id, {
+      classification: { objects, scene: { path: scenePath }, primaryCategory },
+      clipEmbedding,
     });
-    if (!res.ok) throw new Error(`Classifier returned ${res.status}`);
-
-    const classification = await res.json();
-    await CultureModel.findByIdAndUpdate(doc._id, { classification });
   } catch (err) {
     console.error(`Classification failed for ${doc._id}:`, err.message, err.cause || "");
   }
 }
 
-// Calls the Python signature microservice (ORB descriptors) and saves the
-// result on the doc. Same fire-and-forget, best-effort pattern as
-// classifyAndSave -- a failed signature shouldn't block an upload.
-async function signatureAndSave(doc) {
-  const filename = resolveFilename(doc);
-  if (!filename) {
-    console.error(`Signature skipped for ${doc._id}: no s3Url/imageId on this entry`);
-    return;
-  }
-  try {
-    const imageUrl = await generateGetPresignedUrl(filename);
-
-    const res = await fetch(`${SIGNATURE_SERVICE_URL}/signature`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Signature-Secret": process.env.SIGNATURE_SECRET || "",
-      },
-      body: JSON.stringify({ imageUrl }),
-    });
-    if (!res.ok) throw new Error(`Signature service returned ${res.status}`);
-
-    const signature = await res.json();
-    await CultureModel.findByIdAndUpdate(doc._id, { signature });
-    invalidateCandidateCache(); // new signature means the cached candidate list is stale
-  } catch (err) {
-    console.error(`Signature failed for ${doc._id}:`, err.message, err.cause || "");
-  }
+// gets the presigned URLs for all nodes in a graph, so the frontend can display them
+async function mindGraphImg(graph) {
+  const plainGraph = graph.toObject ? graph.toObject() : graph;
+  const docs = await CultureModel.find({ imageId: { $in: plainGraph.nodes } }).lean();
+ 
+  console.log(`mindGraphImg: requested ${plainGraph.nodes.length} node(s), found ${docs.length} matching doc(s) in MongoDB`);
+  const foundIds = new Set(docs.map((d) => d.imageId));
+  plainGraph.nodes.forEach((id) => {
+    if (!foundIds.has(id)) console.log(`  NO MATCHING DOCUMENT for imageId: ${id}`);
+  });
+ 
+  const nodeImages = {};
+  await Promise.all(
+    docs.map(async (doc) => {
+      const filename = resolveFilename(doc);
+      console.log(`  ${doc.imageId} -> resolveFilename: ${filename}`);
+      if (!filename) {
+        console.log(`  SKIPPED ${doc.imageId}: resolveFilename returned null (no s3Url or imageId on this doc)`);
+        return;
+      }
+      try {
+        nodeImages[doc.imageId] = await generateGetPresignedUrl(filename);
+      } catch (err) {
+        console.error(`  S3 sign FAILED for ${doc.imageId} (filename: ${filename}):`, err.message);
+      }
+    })
+  );
+ 
+  return { ...plainGraph, nodeImages };
 }
-
-// In-memory cache of {id, orbDescriptors} for every approved, signed doc --
-// rebuilt lazily so /api/webcam-match doesn't re-query Mongo and
-// re-serialize hundreds of descriptor blobs on every single frame.
-// Same idea as the viewUrlCache pattern in s3.js.
-let candidateCache = null;
-let candidateCacheAt = 0;
-const CANDIDATE_CACHE_TTL_MS = 60_000; // rebuild at most once a minute
-
-function invalidateCandidateCache() {
-  candidateCache = null;
-}
-
-async function getCandidates() {
-  const stale = !candidateCache || (Date.now() - candidateCacheAt) > CANDIDATE_CACHE_TTL_MS;
-  if (stale) {
-    const docs = await CultureModel.find({
-      approved: true,
-      "signature.orbDescriptors": { $ne: null },
-    }).select("_id signature.orbDescriptors").lean();
-
-    candidateCache = docs.map(doc => ({
-      id: doc._id.toString(),
-      orbDescriptors: doc.signature.orbDescriptors,
-    }));
-    candidateCacheAt = Date.now();
-  }
-  return candidateCache;
-}
+ 
+ 
 
 // STEP 1: Request an upload "Ticket"
 app.post("/api/get-upload-url", async (req, res) => {
@@ -174,8 +161,8 @@ app.post("/api/save-entry", async (req, res) => {
     });
 
     await newEntry.save();
-    classifyAndSave(newEntry); // fire-and-forget: don't make the user wait on this
-    signatureAndSave(newEntry); // fire-and-forget: same reasoning
+    // fire-and-forget: don't make the user wait on inference
+    classifyAndSave(newEntry);
     res.json({ success: true });
   } catch (err) {
     console.error("Database Save Error:", err); // This prints the REAL error to your terminal
@@ -187,41 +174,6 @@ app.post("/api/save-entry", async (req, res) => {
 app.get("/admin.html", adminProtector, (req, res) => {
     res.sendFile(path.join(__dirname, "/frontend/admin.html"));
 });
-
-// app.get("/api/admin/pending", adminProtector, async (req, res) => {
-//   try {
-//     const data = await CultureModel.find({ approved: false }).sort({ createdAt: -1 });
-    
-//     const results = await Promise.all(data.map(async (doc) => {
-//         let filename = null;
-//         if (doc.s3Url) {
-//             filename = doc.s3Url.split("/").pop();
-//         } 
-                
-//         if (!filename && doc.imageId) {
-//             filename = `${doc.imageId}.jpeg`; 
-//         }
-
-//         if (filename) {
-//             try {
-//                 const temporaryUrl = await generateGetPresignedUrl(filename);
-//                 return { ...doc._doc, s3Url: temporaryUrl };
-//             } catch (err) {
-//                 console.error(`S3 Sign failed for ${filename}:`, err.message);
-//                 return { ...doc._doc, s3Url: 'https://via.placeholder.com/150?text=S3+Link+Error' };
-//             }
-//         }
-
-//         // 3. Final safety net
-//         return { ...doc._doc, s3Url: 'https://via.placeholder.com/150?text=No+Image+Reference' };
-//     }));
-
-//     res.json(results);
-//   } catch (err) {
-//     console.error("Admin route crash:", err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 
 app.get("/api/admin/pending", adminProtector, async (req, res) => {
   try {
@@ -235,16 +187,16 @@ app.get("/api/admin/pending", adminProtector, async (req, res) => {
 
 app.put("/api/admin/approve/:id", adminProtector, async (req, res) => {
   await CultureModel.findByIdAndUpdate(req.params.id, { approved: true });
-  invalidateCandidateCache();
   res.json({ success: true });
 });
 
 app.delete("/api/admin/delete/:id", adminProtector, async (req, res) => {
   await CultureModel.findByIdAndDelete(req.params.id);
-  invalidateCandidateCache();
   res.json({ success: true });
 });
 
+// Single backfill route -- one inference pass produces classification AND
+// clipEmbedding together, so there's still no separate signature-backfill.
 app.post("/api/admin/classify-backfill", adminProtector, async (req, res) => {
   const force = req.query.force === "true";
   const query = force
@@ -252,22 +204,12 @@ app.post("/api/admin/classify-backfill", adminProtector, async (req, res) => {
     : { $or: [{ classification: null }, { classification: { $exists: false } }] };
 
   const targets = await CultureModel.find(query);
-  for (const doc of targets) {
-    await classifyAndSave(doc); // sequential: gentle on the classifier service
+  console.log(`Backfill starting: ${targets.length} photos to process`);
+  for (let i = 0; i < targets.length; i++) {
+    await classifyAndSave(targets[i]); // sequential: gentle on memory/CPU during a big run
+    console.log(`Backfill progress: ${i + 1}/${targets.length}`);
   }
-  res.json({ success: true, processed: targets.length, force });
-});
-
-app.post("/api/admin/signature-backfill", adminProtector, async (req, res) => {
-  const force = req.query.force === "true";
-  const query = force
-    ? {}
-    : { $or: [{ signature: null }, { signature: { $exists: false } }] };
-
-  const targets = await CultureModel.find(query);
-  for (const doc of targets) {
-    await signatureAndSave(doc); // sequential: gentle on the signature service
-  }
+  console.log("Backfill complete");
   res.json({ success: true, processed: targets.length, force });
 });
 
@@ -287,18 +229,12 @@ app.get("/api/graph-data", async (req, res) => {
           console.error(`S3 Sign failed for ${filename}:`, err.message);
         }
       }
- 
+
       const scenePath = doc.classification?.scene?.path || [];
-      const sceneBroad = doc.classification?.primaryCategory
-        || scenePath[0]?.label
-        || "unclassified";
-      const sceneSpecific = scenePath.length
-        ? scenePath[scenePath.length - 1].label
-        : "unclassified";
-      const sceneConfidence = scenePath.length
-        ? scenePath[scenePath.length - 1].confidence
-        : 0;
- 
+      const sceneBroad = doc.classification?.primaryCategory || scenePath[0]?.label || "unclassified";
+      const sceneSpecific = scenePath[scenePath.length - 1]?.label || sceneBroad;
+      const sceneConfidence = scenePath[0]?.confidence ?? 0;
+
       return {
         id: doc._id.toString(),
         imageId: doc.imageId,
@@ -312,16 +248,17 @@ app.get("/api/graph-data", async (req, res) => {
       };
     }));
 
-    const broadCategories = [...new Set(imageNodes.map(n => n.sceneBroad))];
-    const hubNodes = broadCategories.map(broad => {
-      const members = imageNodes.filter(n => n.sceneBroad === broad);
+    const groupIds = [...new Set(imageNodes.map(n => n.sceneBroad))];
+    const hubNodes = groupIds.map(gid => {
+      const members = imageNodes.filter(n => n.sceneBroad === gid);
+      // highest-confidence member represents the hub, matching the original behavior
       const representative = members.reduce((best, n) =>
-        (n.sceneConfidence > (best?.sceneConfidence ?? -1) ? n : best), null);
+        (!best || n.sceneConfidence > best.sceneConfidence) ? n : best, null);
 
       return {
-        id: `hub:${broad}`,
+        id: `hub:${gid}`,
         isHub: true,
-        label: broad,
+        label: gid,
         img: representative?.img || null,
         representativeId: representative?.id || null,
       };
@@ -330,7 +267,7 @@ app.get("/api/graph-data", async (req, res) => {
     const edges = imageNodes.map(n => ({
       source: n.id,
       target: `hub:${n.sceneBroad}`,
-      confidence: n.sceneConfidence, // lets the frontend scale spring strength per edge
+      confidence: n.sceneConfidence,
     }));
  
     res.json({ nodes: [...hubNodes, ...imageNodes], edges });
@@ -339,11 +276,9 @@ app.get("/api/graph-data", async (req, res) => {
   }
 });
 
-
-
-
-
-
+// Signature matching via Atlas Vector Search -- replaces the old ORB
+// BFMatcher loop entirely. One aggregation call does the nearest-neighbor
+// search server-side instead of pulling descriptor blobs into Node memory.
 app.post("/api/webcam-match", async (req, res) => {
   try {
     const { imageBase64 } = req.body;
@@ -351,32 +286,90 @@ app.post("/api/webcam-match", async (req, res) => {
       return res.status(400).json({ error: "imageBase64 is required" });
     }
 
-    const candidates = await getCandidates();
-    if (!candidates.length) {
-      return res.json({ matchId: null, score: 0, reason: "no signed submissions to match against" });
+    const raw = imageBase64.split(",").pop(); // tolerate "data:image/jpeg;base64,..." prefixes
+    const imageBuffer = Buffer.from(raw, "base64");
+    const queryEmbedding = await runClip(imageBuffer);
+
+    const results = await CultureModel.aggregate([
+      {
+        $vectorSearch: {
+          index: CLIP_VECTOR_INDEX,
+          path: "clipEmbedding",
+          queryVector: queryEmbedding,
+          numCandidates: 100,
+          limit: 1,
+          filter: { approved: true },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          score: { $meta: "vectorSearchScore" },
+        },
+      },
+    ]);
+
+    const best = results[0];
+    if (!best || best.score < WEBCAM_MATCH_MIN_SCORE) {
+      return res.json({ matchId: null, score: best?.score ?? 0, reason: "below confidence threshold" });
     }
 
-    const matchRes = await fetch(`${SIGNATURE_SERVICE_URL}/match`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Signature-Secret": process.env.SIGNATURE_SECRET || "",
-      },
-      body: JSON.stringify({ imageBase64, candidates }),
-    });
-    if (!matchRes.ok) throw new Error(`Match service returned ${matchRes.status}`);
-
-    const result = await matchRes.json();
-    res.json(result);
+    res.json({ matchId: best._id.toString(), score: best.score });
   } catch (err) {
     console.error("Webcam match failed:", err.message, err.cause || "");
     res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Server running on port ${port}`);
+
+// Save a new proximity-graph capture (called from mindar-test.html on space-press)
+ 
+app.post("/api/graphs", async (req, res) => {
+  try {
+    const { nodes, edges } = req.body;
+ 
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      return res.status(400).json({ error: "nodes must be a non-empty array" });
+    }
+    if (!Array.isArray(edges)) {
+      return res.status(400).json({ error: "edges must be an array" });
+    }
+ 
+    const graph = new GraphModel({ nodes, edges });
+    await graph.save();
+ 
+    const getImg = await mindGraphImg(graph);
+    res.json({ success: true, graph: getImg });
+  } catch (err) {
+    console.error("Save graph failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
+
+ 
+app.get("/api/graphs", async (req, res) => {
+  try {
+    const graphs = await GraphModel.find({}).sort({ createdAt: 1 }).lean();
+    const getImg = await Promise.all(graphs.map(mindGraphImg));
+    res.json(getImg);
+  } catch (err) {
+    console.error("List graphs failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+
+
+loadModels()
+  .then(() => {
+    app.listen(port, "0.0.0.0", () => {
+      console.log(`Server running on port ${port}`);
+    });
+  })
+  .catch(err => {
+    console.error("Failed to load inference models, not starting server:", err);
+    process.exit(1);
+  });
 
 // the url on the tag will be the regular url plus /tagIdname
 app.get("/:tagId", (req, res, next) => {

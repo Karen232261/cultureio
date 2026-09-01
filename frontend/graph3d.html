@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Culture I/O </title>
+<style>
+  html, body { 
+    margin: 0; 
+    height: 100%; 
+    background: #ffffff; 
+    overflow: hidden; 
+  }
+  .scene-tooltip {
+    color: #333 !important;
+  }
+  #graph { width: 100vw; height: 100vh; }
+  #status {
+    position: fixed; top: 10px; left: 10px; color: #000000;
+    font-family: sans-serif; font-size: 14px; z-index: 10;
+  }
+
+  #image-popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #image-popup-overlay.open { display: flex; }
+  #image-popup-img {
+    max-width: 90vw;
+    max-height: 80vh;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  }
+  #image-popup-caption {
+    color: #fff;
+    font-family: sans-serif;
+    margin-top: 15px;
+    max-width: 80vw;
+    text-align: center;
+    font-size: 1rem;
+  }
+  #image-popup-close {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 2.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+</style>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+</head>
+<body>
+<div id="status">Loading graph data</div>
+<div id="graph"></div>
+
+<div id="image-popup-overlay">
+  <button id="image-popup-close" aria-label="Close">&times;</button>
+  <img id="image-popup-img" alt="">
+  <div id="image-popup-caption"></div>
+</div>
+<script>
+  const imagePopupOverlay = document.getElementById('image-popup-overlay');
+  const imagePopupImg = document.getElementById('image-popup-img');
+  const imagePopupCaption = document.getElementById('image-popup-caption');
+  const imagePopupClose = document.getElementById('image-popup-close');
+
+  // function showImagePopup(imgUrl, caption, sceneText) {
+  function showImagePopup(imgUrl, caption) {
+    imagePopupImg.src = imgUrl || '';
+    const lines = [caption].filter(t => t && t.trim() !== '');
+    // const lines = [caption, sceneText].filter(t => t && t.trim() !== '');
+    // if (lines.length) {
+    //   imagePopupCaption.textContent = lines.join(' · ');
+    //   imagePopupCaption.style.display = 'block';
+    // } else {
+    //   imagePopupCaption.textContent = '';
+    //   imagePopupCaption.style.display = 'none';
+    // }
+    imagePopupCaption.style.display = 'block';
+
+    imagePopupOverlay.classList.add('open');
+  }
+
+  function hideImagePopup() {
+    imagePopupOverlay.classList.remove('open');
+    imagePopupImg.src = '';
+  }
+
+  imagePopupClose.addEventListener('click', hideImagePopup);
+  imagePopupOverlay.addEventListener('click', (e) => {
+    if (e.target === imagePopupOverlay) hideImagePopup();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideImagePopup();
+  });
+</script>
+
+<script>
+  const textureCache = new Map();
+
+  // Loads (and caches) a THREE.Texture for a given image 
+  function getTexture(url) {
+    if (textureCache.has(url)) return textureCache.get(url);
+    const imgEl = new Image();
+    imgEl.crossOrigin = "anonymous";
+    const texture = new THREE.Texture(imgEl);
+    imgEl.onload = () => { texture.needsUpdate = true; };
+    imgEl.onerror = () => console.error("Failed to load image for texture:", url);
+    imgEl.src = url;
+    textureCache.set(url, texture);
+    return texture;
+  }
+
+  function sceneText(n) {
+    if (!n.sceneSpecific || n.sceneSpecific === "unclassified") return "";
+    const pct = Math.round((n.sceneConfidence || 0) * 100);
+    return `${n.sceneSpecific} (${pct}%)`;
+  }
+
+  // Renders a hub as its representative photo (letterboxed into a square,
+  // ringed in orange) with the category label underneath -- baked onto one
+  // canvas texture since a THREE.Sprite can only carry a single image.
+  function makeHubSprite(label, imgUrl) {
+    const photoArea = 200;
+    const labelHeight = 40;
+    const canvas = document.createElement("canvas");
+    canvas.width = photoArea;
+    canvas.height = photoArea + labelHeight;
+    const ctx = canvas.getContext("2d");
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(material);
+    // Hubs render larger than regular photo sprites (~14 world units) so
+    // the representative photo reads as the center of its cluster.
+    const worldHeight = 22;
+    sprite.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);
+
+    const draw = (imgEl) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (imgEl && imgEl.naturalWidth) {
+        const scale = Math.min(photoArea / imgEl.naturalWidth, photoArea / imgEl.naturalHeight);
+        const w = imgEl.naturalWidth * scale;
+        const h = imgEl.naturalHeight * scale;
+        const x = (photoArea - w) / 2;
+        const y = (photoArea - h) / 2;
+        ctx.drawImage(imgEl, x, y, w, h);
+        ctx.strokeStyle = "#ffaa33";
+        ctx.lineWidth = 8;
+        ctx.strokeRect(x, y, w, h);
+      } else {
+        ctx.fillStyle = "#cccccc";
+        ctx.fillRect(0, 0, photoArea, photoArea);
+      }
+      ctx.fillStyle = "#333333";
+      ctx.font = "bold 26px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, canvas.width / 2, photoArea + labelHeight / 2);
+      texture.needsUpdate = true;
+    };
+
+    draw(null); // placeholder box + label right away, photo fills in once loaded
+
+    if (imgUrl) {
+      const photoTexture = getTexture(imgUrl); // reuses the same load/cache path as regular nodes
+      const imgEl = photoTexture.image;
+      if (imgEl.complete && imgEl.naturalWidth) {
+        draw(imgEl);
+      } else {
+        imgEl.addEventListener("load", () => draw(imgEl));
+      }
+    }
+
+    return sprite;
+  }
+
+  // Deterministic hash so the same category always lands in the same
+  // spot in space across reloads, instead of jumping around each time.
+  function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (Math.imul(h, 31) + str.charCodeAt(i)) | 0;
+    return h;
+  }
+
+  // One stable anchor point per scene category, spread out on a sphere
+  // so different clusters land in visibly separate parts of the graph.
+  const CLUSTER_RADIUS = 260;
+  const clusterAnchors = new Map();
+  function anchorFor(category) {
+    if (!clusterAnchors.has(category)) {
+      const h = hashString(category);
+      const theta = ((h % 10000) / 10000) * Math.PI * 2;
+      const phi = (((h >> 12) % 10000) / 10000) * Math.PI - Math.PI / 2;
+      clusterAnchors.set(category, {
+        x: CLUSTER_RADIUS * Math.cos(phi) * Math.cos(theta),
+        y: CLUSTER_RADIUS * Math.sin(phi),
+        z: CLUSTER_RADIUS * Math.cos(phi) * Math.sin(theta),
+      });
+    }
+    return clusterAnchors.get(category);
+  }
+
+  // Pulls each node toward its scene category's anchor point.
+  // Confidence controls the pull strength: a confident classification
+  // (close to 1.0) snaps tightly into its cluster; a low-confidence one
+  // barely pulls at all and stays loose, drifting near cluster boundaries.
+  function sceneClusterForce(alpha) {
+    for (const node of Graph.graphData().nodes) {
+      if (node.isHub) continue;
+      const anchor = anchorFor(node.sceneSpecific || "unclassified");
+      const strength = 0.02 + 0.2 * (node.sceneConfidence || 0);
+      node.vx += (anchor.x - node.x) * strength * alpha;
+      node.vy += (anchor.y - node.y) * strength * alpha;
+      node.vz += (anchor.z - node.z) * strength * alpha;
+    }
+  }
+
+  let Graph;
+  let knownIds = new Set();
+
+  // How often to check the server for new submissions. Just a polling
+  // interval against the existing /api/graph-data endpoint -- no server
+  // changes needed. Bump this up/down if you want fresher/less-chatty updates.
+  const POLL_MS = 15000;
+
+  function flashStatus(msg, revertTo) {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    if (revertTo) setTimeout(() => { el.textContent = revertTo; }, 4000);
+  }
+
+  function fetchGraphData() {
+    return fetch("/api/graph-data").then(r => r.json());
+  }
+
+  // Initial load: builds the graph from scratch.
+  function initGraph({ nodes, edges }) {
+    knownIds = new Set(nodes.map(n => n.id));
+    lastGraphSignature = graphSignature(nodes, edges);
+    const summary = `${nodes.filter(n => !n.isHub).length} images, ${edges.length} connections`;
+    document.getElementById("status").textContent = summary;
+
+    const gData = {
+      nodes: nodes.map(n => ({
+        id: n.id, img: n.img, caption: n.caption, isHub: n.isHub, label: n.label,
+        sceneBroad: n.sceneBroad, sceneSpecific: n.sceneSpecific,
+        sceneConfidence: n.sceneConfidence,
+      })),
+      links: edges.map(e => ({ source: e.source, target: e.target, confidence: e.confidence }))
+    };
+
+    Graph = ForceGraph3D()(document.getElementById("graph"))
+      .backgroundColor("#ffffff")
+      .graphData(gData)
+      // .nodeLabel(n => n.isHub ? n.label : ([n.caption, sceneText(n)].filter(Boolean).join(' · ') || n.id))
+      .nodeLabel(n => n.isHub ? n.label : ([n.caption].filter(Boolean).join(' · ') || n.id))
+
+      .linkDirectionalArrowLength(link => link.confidence ? 0 : 4)
+      .linkDirectionalArrowRelPos(1)
+      .linkCurvature(0.15)
+      // Higher-confidence images draw a brighter, more opaque link to their hub.
+      .linkColor(link => `rgba(90,90,220,${0.2 + 0.6 * (link.confidence || 0)})`)
+      .linkWidth(link => 0.5 + 2 * (link.confidence || 0))
+      .nodeThreeObject(n => {
+        if (n.isHub) {
+          return makeHubSprite(n.label, n.img);
+        }
+        const texture = getTexture(n.img);
+        const material = new THREE.SpriteMaterial({
+          map: texture,
+          transparent: true
+        });
+        const sprite = new THREE.Sprite(material);
+        const maxDim = 14;
+        sprite.scale.set(maxDim, maxDim, 1); // fallback square until the image loads
+
+        // Once the photo loads, reshape the sprite to its real aspect ratio
+        // instead of leaving it stretched into a square -- no forced shape.
+        const applyAspectRatio = () => {
+          const img = texture.image;
+          if (!img || !img.naturalWidth) return;
+          const scale = maxDim / Math.max(img.naturalWidth, img.naturalHeight);
+          sprite.scale.set(img.naturalWidth * scale, img.naturalHeight * scale, 1);
+        };
+        if (texture.image && texture.image.complete && texture.image.naturalWidth) {
+          applyAspectRatio();
+        } else if (texture.image) {
+          texture.image.addEventListener("load", applyAspectRatio);
+        }
+        return sprite;
+      })
+      .onNodeClick(node => {
+        if (node.isHub) return;
+        // showImagePopup(node.img, node.caption, sceneText(node));
+        showImagePopup(node.img, node.caption);
+
+      });
+
+    // Confidence also sets how strongly each link pulls its image
+    // toward the hub -- a real spring, not just a visual style.
+    Graph.d3Force('link').strength(link => 0.05 + 0.4 * (link.confidence || 0));
+    Graph.d3Force('cluster', sceneClusterForce);
+
+    startPolling(summary);
+  }
+
+  // Builds a stable signature of "what's actually in the graph" so we can
+  // tell a genuinely new poll result apart from an unchanged one. Node IDs
+  // cover new/removed submissions; hub img is included too, since a hub's
+  // representative photo can change (a new highest-confidence submission
+  // in that category) without the hub's own node ID changing.
+  function graphSignature(nodes, edges) {
+    const nodePart = nodes
+      .map(n => `${n.id}:${n.isHub ? n.img || '' : ''}`)
+      .sort()
+      .join('|');
+    const edgePart = edges
+      .map(e => `${e.source}->${e.target}`)
+      .sort()
+      .join('|');
+    return `${nodePart}##${edgePart}`;
+  }
+  let lastGraphSignature = null;
+
+  // Later polls: hand ForceGraph3D a fresh dataset. 3d-force-graph merges
+  // by node `id` -- nodes that already exist keep their current position
+  // and velocity, only genuinely new nodes/links get added and animate in.
+  // IMPORTANT: calling .graphData() at all reheats the physics simulation,
+  // even if the data is identical to what's already loaded -- that's what
+  // caused the whole graph to "wake up and jiggle" every poll. So we only
+  // call it when something has actually changed.
+  function refreshGraph({ nodes, edges }, baseSummary) {
+    const signature = graphSignature(nodes, edges);
+    if (signature === lastGraphSignature) return; // nothing changed -- stay static
+    lastGraphSignature = signature;
+
+    const incomingIds = new Set(nodes.map(n => n.id));
+    const newCount = [...incomingIds].filter(id => !knownIds.has(id)).length;
+    knownIds = incomingIds;
+
+    const gData = {
+      nodes: nodes.map(n => ({
+        id: n.id, img: n.img, caption: n.caption, isHub: n.isHub, label: n.label,
+        sceneBroad: n.sceneBroad, sceneSpecific: n.sceneSpecific,
+        sceneConfidence: n.sceneConfidence,
+      })),
+      links: edges.map(e => ({ source: e.source, target: e.target, confidence: e.confidence }))
+    };
+    Graph.graphData(gData);
+
+    const summary = `${nodes.filter(n => !n.isHub).length} images, ${edges.length} connections`;
+    document.getElementById("status").textContent = summary;
+    if (newCount > 0) {
+      flashStatus(`+${newCount} new submission${newCount > 1 ? 's' : ''}`, summary);
+    }
+  }
+
+  function startPolling(baseSummary) {
+    setInterval(() => {
+      fetchGraphData()
+        .then(data => refreshGraph(data, baseSummary))
+        .catch(err => console.error("Poll for new submissions failed:", err));
+    }, POLL_MS);
+  }
+
+  fetchGraphData()
+    .then(initGraph)
+    .catch(err => {
+      document.getElementById("status").textContent =
+        "Failed to load graph data: " + err.message;
+      console.error(err);
+    });
+</script>
+
+</body>
+</html>
